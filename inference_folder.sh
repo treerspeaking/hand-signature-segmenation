@@ -1,0 +1,1 @@
+python inference_folder.py --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_28/checkpoints/best_hand_segmentation_epoch=78_val/epoch_iou=0.8092.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./out

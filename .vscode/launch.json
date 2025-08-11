@@ -1,0 +1,32 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Debug Hand Segmentation Inference",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/inference_folder.py",
+            "args": [
+                "--checkpoint",
+                "/home/treerspeaking/src/python/hand_seg/checkpoints/best_hand_segmentation_epoch=98_val/epoch_iou=0.8690.ckpt",
+                "--folder",
+                "/home/treerspeaking/src/python/hand_seg/encoded_data",
+                "--output",
+                "./out"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "stopOnEntry": false,
+            "env": {}
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}
