@@ -4,34 +4,38 @@ import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
-from networks.model import deeplabv3plus_mobilenet
+# from networks.model import deeplabv3plus_mobilenet
+from train import DeepLabLightningModule
+
 import argparse
 import os
-
 from pathlib import Path
 
 def load_model(checkpoint_path, num_classes=2, output_stride=8):
-    """Load trained model from checkpoint."""
-    model = deeplabv3plus_mobilenet(
-        num_classes=num_classes,
-        output_stride=output_stride,
-        pretrained_backbone=False
-    )
+    # """Load trained model from checkpoint."""
+    # model = deeplabv3plus_mobilenet(
+    #     num_classes=num_classes,
+    #     output_stride=output_stride,
+    #     pretrained_backbone=False
+    # )
     
-    # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    # # Load checkpoint
+    # checkpoint = torch.load(checkpoint_path, map_location='cpu')
     
-    # Handle Lightning checkpoint format
-    if 'state_dict' in checkpoint:
-        state_dict = {}
-        for key, value in checkpoint['state_dict'].items():
-            # Remove 'model.' prefix from Lightning checkpoints
-            new_key = key.replace('model.', '') if key.startswith('model.') else key
-            state_dict[new_key] = value
-    else:
-        state_dict = checkpoint
+    # # Handle Lightning checkpoint format
+    # if 'state_dict' in checkpoint:
+    #     state_dict = {}
+    #     for key, value in checkpoint['state_dict'].items():
+    #         # Remove 'model.' prefix from Lightning checkpoints
+    #         new_key = key.replace('model.', '') if key.startswith('model.') else key
+    #         state_dict[new_key] = value
+    # else:
+    #     state_dict = checkpoint
     
-    model.load_state_dict(state_dict, strict=False)
+    # model.load_state_dict(state_dict, strict=False)
+    # model.eval()
+    # model = DeepLabLightningModule(num_classes=num_classes, output_stride=output_stride).load_from_checkpoint("checkpoint_path")
+    model = DeepLabLightningModule.load_from_checkpoint(checkpoint_path)
     model.eval()
     return model
 
@@ -137,9 +141,9 @@ def main():
             
             visualize_results(image, final_mask, save_path=out_path)
             
-            image.save(out_dir / f"{f.name}.png")
+            # image.save(out_dir / f"{f.name}.png")
             final_mask = Image.fromarray((final_mask * 255).astype(np.uint8))
-            final_mask.save(out_dir / f"{f.name} -  mask.png")
+            # final_mask.save(out_dir / f"{f.name} -  mask.png")
             
         
         

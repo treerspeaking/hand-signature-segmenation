@@ -1,0 +1,1 @@
+python train.py --config /home/treerspeaking/src/python/hand_seg/config/unet.yaml

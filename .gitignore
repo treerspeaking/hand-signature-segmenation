@@ -208,3 +208,6 @@ encoded_data/
 out/
 *weight*
 AutoCrawler/
+dataset/
+*.png
+*.jpeg

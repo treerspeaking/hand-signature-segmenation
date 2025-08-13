@@ -13,68 +13,17 @@ from networks.model import deeplabv3plus_mobilenet
 import glob
 from torch.optim.lr_scheduler import PolynomialLR
 from torchvision.tv_tensors import Image as Image_tv, Mask as Mask_tv
+import segmentation_models_pytorch as smp
+import yaml
+import re
+
 import argparse
 import math
+from pathlib import Path
+import shutil
+
 from utils.ramp import polynomialRamp
-
-class FocalLossV2(torch.nn.Module):
-    """
-    Alternative stable implementation using cross entropy loss directly.
-    """
-    def __init__(self, alpha=1.0, gamma=2.0, reduction='mean', ignore_index=-100):
-        super(FocalLossV2, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.reduction = reduction
-        self.ignore_index = ignore_index
-    
-    def forward(self, inputs, targets):
-        # Input validation
-        assert not torch.isnan(inputs).any(), "Input contains NaN"
-        # assert not torch.isinf(inputs).any(), "Input contains Inf"
-        
-        # Compute cross entropy loss
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none', 
-                                ignore_index=self.ignore_index)
-        
-        # Compute probabilities using softmax
-        with torch.no_grad():
-            p = F.softmax(inputs, dim=-1)
-            p_t = p.gather(1, targets.unsqueeze(1)).squeeze(1)
-            
-            # Handle ignore_index
-            if self.ignore_index >= 0:
-                mask = targets != self.ignore_index
-                p_t = p_t * mask.float() + (1 - mask.float())  # Set ignored to 1 to avoid (1-1)^gamma = 0
-        
-        # Clamp probabilities to avoid numerical issues
-        p_t = torch.clamp(p_t, min=1e-8, max=1.0 - 1e-8)
-        
-        # Compute focal weight
-        focal_weight = (1 - p_t) ** self.gamma
-        
-        # Compute focal loss
-        focal_loss = self.alpha * focal_weight * ce_loss
-        
-        # Handle ignore_index for reduction
-        if self.ignore_index >= 0:
-            mask = targets != self.ignore_index
-            focal_loss = focal_loss * mask.float()
-            
-            if mask.sum() == 0:
-                return torch.tensor(0.0, device=inputs.device, requires_grad=True)
-        
-        # Apply reduction
-        if self.reduction == 'mean':
-            if self.ignore_index >= 0:
-                return focal_loss.sum() / mask.sum().clamp(min=1)
-            else:
-                return focal_loss.mean()
-        elif self.reduction == 'sum':
-            return focal_loss.sum()
-        else:
-            return focal_loss
-
+from utils.loss import FocalLossV2
 
 class HandSegmentationDataset(Dataset):
     """Hand Segmentation Dataset for loading images and masks."""
@@ -160,7 +109,7 @@ class HandSegDataModule(pl.LightningDataModule):
         
 
     def train_dataloader(self):
-        return DataLoader(self.train, batch_size=self.train_batch_size, num_workers=14, shuffle=True, pin_memory=True)
+        return DataLoader(self.train, batch_size=self.train_batch_size, num_workers=8, shuffle=True, pin_memory=True)
 
     def val_dataloader(self):
         return DataLoader(self.val, batch_size=self.val_batch_size, num_workers=4)
@@ -179,8 +128,13 @@ class DeepLabLightningModule(pl.LightningModule):
                  num_classes=2, 
                  learning_rate=0.01, 
                  weight_decay=1e-4,
-                 pretrained_path=None,
-                 output_stride=8):
+                pretrained_path=None,
+                output_stride=16,
+
+                arch=None,
+                 encoder_name=None,
+                 classes=2 
+                 ):
         super().__init__()
         self.save_hyperparameters()
         
@@ -189,31 +143,25 @@ class DeepLabLightningModule(pl.LightningModule):
         self.weight_decay = weight_decay
         
         # Initialize model
+        # self.model = smp.create_model(
+        #     arch=arch,
+        #     encoder_name=encoder_name,
+        #     in_channels=3,
+        #     classes=classes
+        # )
+        
+        # checkpoint = "smp-hub/segformer-b0-512x512-ade-160k"
+        # model = smp.from_pretrained(checkpoint).eval().to(device)
+        # ahhh
+        # preprocessing = A.Compose.from_pretrained(checkpoint)
         self.model = deeplabv3plus_mobilenet(
             num_classes=num_classes, 
             output_stride=output_stride, 
             pretrained_backbone=True
         )
+
         
         # Load pretrained weights if provided
-        if pretrained_path and os.path.exists(pretrained_path):
-            print(f"Loading pretrained weights from: {pretrained_path}")
-            checkpoint = torch.load(pretrained_path, map_location='cpu', weights_only=False)
-            
-            # Handle different checkpoint formats
-            if 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            elif 'model' in checkpoint:
-                state_dict = checkpoint['model']
-            else:
-                state_dict = checkpoint
-                
-            # Load weights with strict=False to handle size mismatches
-            try:
-                self.model.load_state_dict(state_dict, strict=False)
-                print("Successfully loaded pretrained weights")
-            except Exception as e:
-                print(f"Warning: Could not load some weights: {e}")
         
         # Loss function - use CrossEntropyLoss for segmentation
         # self.criterion = nn.CrossEntropyLoss(ignore_index=255)
@@ -240,6 +188,9 @@ class DeepLabLightningModule(pl.LightningModule):
     
     def forward(self, x):
         return self.model(x)
+    
+    def on_train_start(self):
+        return save_train("logs/hand_segmentation")
     
     def calculate_metrics(self, pred, target):
         """Calculate IoU, accuracy, F1, precision, recall, and per-class accuracy metrics."""
@@ -464,6 +415,9 @@ class DeepLabLightningModule(pl.LightningModule):
         }
         
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler_config}
+    
+    def forward(self, x):
+        return self.model(x)
 
 
 def create_data_transforms(input_size=512):
@@ -472,16 +426,16 @@ def create_data_transforms(input_size=512):
     # Training transforms with augmentation
     train_transform = v2.Compose([
         # v2.Resize((input_size, input_size)),
-        v2.RandomResizedCrop((input_size, input_size), scale=(0.4, 1.0), ratio=(0.75, 1.33)),
+        v2.RandomResizedCrop((input_size, input_size), scale=(0.4, 1.0)),
         # v2.Resize((input_size, input_size)),
         v2.ToTensor(),
-        v2.ColorJitter(brightness=0.1, contrast=0.2, saturation=0.2, hue=0.5),
+        v2.ColorJitter(brightness=0.1, contrast=0.2, saturation=0.2, hue=0.2),
         # v2.ColorJitter(brightness=0.1, contrast=0.3, saturation=0.3, hue=0.5),
         # v2.RandomPhotometricDistort(),
         v2.RandomHorizontalFlip(p=0.5),
         v2.RandomVerticalFlip(p=0.5),
         v2.RandomRotation(90),
-        v2.RandomGrayscale(p=0.4),
+        v2.RandomGrayscale(p=0.3),
         v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
@@ -502,49 +456,92 @@ def create_data_transforms(input_size=512):
     
     return train_transform, val_transform, target_transform
 
+def get_latest_version_folder(base_path):
+    pattern = os.path.join(base_path, "version_*")
+    version_folders = glob.glob(pattern)
+    
+    if not version_folders:
+        return None
+    
+    # Extract version numbers and sort
+    def extract_version(folder_path):
+        folder_name = os.path.basename(folder_path)
+        match = re.match(r'version_(\d+)', folder_name)
+        return int(match.group(1)) if match else -1
+    
+    # Return the folder with the highest version number
+    return max(version_folders, key=extract_version)
+
+def save_train(save_dir):
+    save_dir = Path(save_dir)
+    
+    newest_folder = get_latest_version_folder(save_dir)
+    
+    current_script = Path(__file__)
+    
+    # Create destination path
+    dest_path = Path(newest_folder) / current_script.name
+    
+    try:
+        # Copy the current script to the latest version folder
+        shutil.copy2(current_script, dest_path)
+        print(f"Copied {current_script.name} to {dest_path}")
+        return dest_path
+    except Exception as e:
+        print(f"Error copying file: {e}")
+        return None
+    
+    
+    
+    
+    # return latest_folder
+    
+
 
 def main():
     parser = argparse.ArgumentParser(description='Train DeepLabV3+ for Hand Segmentation')
-    parser.add_argument('--data_root', type=str, default='./dataset', 
-                       help='Root directory of dataset')
-    parser.add_argument('--pretrained_path', type=str, 
-                       default='./pretrained_weight/best_deeplabv3plus_mobilenet_cityscapes_os16.pth',
-                       help='Path to pretrained weights')
-    parser.add_argument('--batch_size', type=int, default=8, 
-                       help='Batch size for training')
-    parser.add_argument('--num_epochs', type=int, default=100, 
-                       help='Number of training epochs')
-    parser.add_argument('--learning_rate', type=float, default=0.01, 
-                       help='Learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-4, 
-                       help='Weight decay')
-    parser.add_argument('--input_size', type=int, default=512, 
-                       help='Input image size')
-    parser.add_argument('--num_workers', type=int, default=4, 
-                       help='Number of data loader workers')
+    # parser.add_argument('--data_root', type=str, default='./dataset', 
+    #                    help='Root directory of dataset')
+    # parser.add_argument('--pretrained_path', type=str, 
+    #                    default='./pretrained_weight/best_deeplabv3plus_mobilenet_cityscapes_os16.pth',
+    #                    help='Path to pretrained weights')
+    # parser.add_argument('--batch_size', type=int, default=8, 
+    #                    help='Batch size for training')
+    # parser.add_argument('--num_epochs', type=int, default=100, 
+    #                    help='Number of training epochs')
+    # parser.add_argument('--learning_rate', type=float, default=0.01, 
+    #                    help='Learning rate')
+    # parser.add_argument('--weight_decay', type=float, default=1e-4, 
+    #                    help='Weight decay')
+    # parser.add_argument('--input_size', type=int, default=512, 
+    #                    help='Input image size')
+    # parser.add_argument('--num_workers', type=int, default=4, 
+    #                    help='Number of data loader workers')
     # parser.add_argument('--output_dir', type=str, default='./checkpoints', 
     #                    help='Output directory for checkpoints')
-    parser.add_argument('--log_dir', type=str, default='./logs', 
-                       help='Directory for tensorboard logs')
+    parser.add_argument('--config', type=str, 
+                       help='config file for training')
+    # parser.add_argument('--log_dir', type=str, default='./logs', 
+    #                    help='Directory for tensorboard logs')
     
     args = parser.parse_args()
-    
+    cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
     # Create directories
     # os.makedirs(args.output_dir, exist_ok=True)
-    os.makedirs(args.log_dir, exist_ok=True)
+    os.makedirs(cfg["log_dir"], exist_ok=True)
     
     # Create transforms
-    train_transform, val_transform, target_transform = create_data_transforms(args.input_size)
+    train_transform, val_transform, target_transform = create_data_transforms(cfg["input_size"])
     
     # Create datasets
     train_dataset = HandSegmentationDataset(
-        data_dir=os.path.join(args.data_root, 'train'),
+        data_dir=os.path.join(cfg["data_root"], 'train'),
         transform=train_transform,
         target_transform=target_transform
     )
     
     val_dataset = HandSegmentationDataset(
-        data_dir=os.path.join(args.data_root, 'test'),
+        data_dir=os.path.join(cfg["data_root"], 'test'),
         transform=val_transform,
         target_transform=target_transform
     )
@@ -566,7 +563,8 @@ def main():
     #     num_workers=args.num_workers,
     #     pin_memory=True
     # )
-    datamodule = HandSegDataModule(os.path.join(args.data_root), args.batch_size, args.batch_size,train_transform, val_transform, target_transform)
+    
+    datamodule = HandSegDataModule(os.path.join(cfg["data_root"]), cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
     
     print(f"Training samples: {len(train_dataset)}")
     print(f"Validation samples: {len(val_dataset)}")
@@ -574,10 +572,15 @@ def main():
     # Initialize model
     model = DeepLabLightningModule(
         num_classes=2,  # background and hand
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        pretrained_path=args.pretrained_path,
-        output_stride=8
+        learning_rate=cfg["learning_rate"],
+        weight_decay=cfg["weight_decay"],
+        arch=cfg["arch"],
+        encoder_name=cfg["encoder_name"],
+        # learning_rate=args.learning_rate,
+        # weight_decay=args.weight_decay,
+        pretrained_path=cfg["pretrained_path"],
+        # output_stride=8
+
     )
     
     # Setup callbacks
@@ -597,14 +600,14 @@ def main():
     
     # TensorBoard logger
     logger = TensorBoardLogger(
-        save_dir=args.log_dir,
+        save_dir=cfg["log_dir"],
         name='hand_segmentation',
         version=None
     )
     
     # Initialize trainer
     trainer = pl.Trainer(
-        max_epochs=args.num_epochs,
+        max_epochs=cfg["num_epochs"],
         callbacks=[checkpoint_callback, lr_monitor],
         logger=logger,
         accelerator='auto',
@@ -618,17 +621,17 @@ def main():
         benchmark=True
     )
     
+    
     # Print model summary
     print("\nModel Summary:")
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     
     # Start training
-    print(f"\nStarting training for {args.num_epochs} epochs...")
+    print(f"\nStarting training for {cfg['num_epochs']} epochs...")
     # print(f"Training on {len(train_loader)} batches per epoch")
     # print(f"Validation on {len(val_loader)} batches per epoch")
     print(f"Logs will be saved to: {logger.log_dir}")
-    # print(f"Checkpoints will be saved to: {args.output_dir}")
     
     # trainer.fit(model, train_loader, val_loader)
     trainer.fit(model, datamodule=datamodule)
