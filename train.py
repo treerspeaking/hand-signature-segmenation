@@ -143,22 +143,22 @@ class DeepLabLightningModule(pl.LightningModule):
         self.weight_decay = weight_decay
         
         # Initialize model
-        # self.model = smp.create_model(
-        #     arch=arch,
-        #     encoder_name=encoder_name,
-        #     in_channels=3,
-        #     classes=classes
-        # )
+        self.model = smp.create_model(
+            arch=arch,
+            encoder_name=encoder_name,
+            in_channels=3,
+            classes=classes
+        )
         
         # checkpoint = "smp-hub/segformer-b0-512x512-ade-160k"
         # model = smp.from_pretrained(checkpoint).eval().to(device)
         # ahhh
         # preprocessing = A.Compose.from_pretrained(checkpoint)
-        self.model = deeplabv3plus_mobilenet(
-            num_classes=num_classes, 
-            output_stride=output_stride, 
-            pretrained_backbone=True
-        )
+        # self.model = deeplabv3plus_mobilenet(
+        #     num_classes=num_classes, 
+        #     output_stride=output_stride, 
+        #     pretrained_backbone=True
+        # )
 
         
         # Load pretrained weights if provided
@@ -435,7 +435,7 @@ def create_data_transforms(input_size=512):
         v2.RandomHorizontalFlip(p=0.5),
         v2.RandomVerticalFlip(p=0.5),
         v2.RandomRotation(90),
-        v2.RandomGrayscale(p=0.3),
+        v2.RandomGrayscale(p=0.1),
         v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
@@ -578,7 +578,7 @@ def main():
         encoder_name=cfg["encoder_name"],
         # learning_rate=args.learning_rate,
         # weight_decay=args.weight_decay,
-        pretrained_path=cfg["pretrained_path"],
+        pretrained_path=cfg.get("pretrained_path", None),
         # output_stride=8
 
     )

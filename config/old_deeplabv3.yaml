@@ -8,4 +8,4 @@ num_workers: 4                   # Number of data loader workers
 log_dir: "./logs"
 arch: "DeepLabV3Plus_old"
 encoder_name: "mobilenet_v2"
-pretrained_path: "/home/treerspeaking/src/python/hand_seg/pretrained_weight/best_deeplabv3plus_mobilenet_voc_os16.pth"
+pretrained_path: "/home/treerspeaking/src/python/hand_seg/pretrained_weight/best_deeplabv3plus_mobilenet_cityscapes_os16.pth"
