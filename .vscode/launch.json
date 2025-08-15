@@ -3,24 +3,22 @@
     "configurations": [
         
         {
-            "name": "Debug Hand Segmentation Inference",
+            "name": "Hand Segmentation Inference",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/inference_folder.py",
+            "module": "inference.inference_folder",
             "args": [
                 "--checkpoint",
-                "/home/treerspeaking/src/python/hand_seg/checkpoints/best_hand_segmentation_epoch=98_val/epoch_iou=0.8690.ckpt",
+                "/home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_57/checkpoints/best_hand_segmentation_epoch=44_val/epoch_iou=0.0000.ckpt",
                 "--folder",
                 "/home/treerspeaking/src/python/hand_seg/encoded_data",
                 "--output",
-                "./out"
+                "./inference/out-unet-base"
             ],
-            "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "justMyCode": false,
-            "stopOnEntry": false,
-            "env": {}
-        },
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
         {
             "name": "debug train.py",
             "type": "debugpy",
@@ -29,7 +27,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "/home/treerspeaking/src/python/hand_seg/config/old_deeplabv3.yaml",
+                "/home/treerspeaking/src/python/hand_seg/config/unet.yaml",
             ],
         },
         {

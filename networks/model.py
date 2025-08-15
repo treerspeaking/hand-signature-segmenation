@@ -87,18 +87,7 @@ def _segm_mobilenet(name, backbone_name, num_classes, output_stride, pretrained_
     else:
         aspp_dilate = [6, 12, 18]
 
-    backbone = mobilenetv2.mobilenet_v2(pretrained=pretrained_backbone, output_stride=# The
-    # `output_stride`
-    # parameter in
-    # the provided
-    # code is used
-    # to control the
-    # output stride
-    # of the
-    # backbone
-    # network in the
-    # DeepLab
-    # models.
+    backbone = mobilenetv2.mobilenet_v2(pretrained=pretrained_backbone, output_stride=#
     output_stride)
     
     # rename layers

@@ -1,6 +1,6 @@
 
-data_root: "./dataset"
-batch_size: 8                    # Batch size for training
+data_root: "./dataset/new_dataset"
+batch_size: 24                   # Batch size for training
 num_epochs: 100                  # Number of training epochs
 learning_rate: 0.01              # Learning rate
 weight_decay: 0.0001             # Weight decay (1e-4)

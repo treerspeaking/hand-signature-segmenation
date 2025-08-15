@@ -10,20 +10,23 @@ from torchvision.transforms import v2
 from PIL import Image
 import numpy as np
 from networks.model import deeplabv3plus_mobilenet
-import glob
-from torch.optim.lr_scheduler import PolynomialLR
-from torchvision.tv_tensors import Image as Image_tv, Mask as Mask_tv
+from torchvision.tv_tensors import Mask as Mask_tv
 import segmentation_models_pytorch as smp
 import yaml
-import re
 
 import argparse
 import math
 from pathlib import Path
 import shutil
+import re
+from pathlib import Path
+import glob
+from typing import List
 
 from utils.ramp import polynomialRamp
-from utils.loss import FocalLossV2
+from utils.loss import FocalLossV2, FocalLossBCE
+
+IMAGE_EXTENSION = (".png", ".jpg", ".jpeg")
 
 class HandSegmentationDataset(Dataset):
     """Hand Segmentation Dataset for loading images and masks."""
@@ -34,20 +37,28 @@ class HandSegmentationDataset(Dataset):
         self.target_transform = target_transform
         
         # Find all image files (not _gt.jpg and not _mask.jpg)
-        image_pattern = os.path.join(data_dir, "*.jpg")
-        all_files = glob.glob(image_pattern)
+        # image_pattern = os.path.join(data_dir, "*.jpg")
+        # all_files = glob.glob(image_pattern)
         
-        # Filter to get only base images (not ground truth or mask files)
-        self.image_files = []
-        for file in all_files:
-            filename = os.path.basename(file)
-            if not filename.endswith('_gt.jpg') and not filename.endswith('_mask.jpg'):
-                base_name = filename.replace('.jpg', '')
-                mask_file = os.path.join(data_dir, f"{base_name}_mask.jpg")
-                if os.path.exists(mask_file):
-                    self.image_files.append(file)
+        self.images_folder = os.path.join(data_dir, "images")
+        image_pattern = os.path.join(self.images_folder, "*")
+        self.image_files = [f for f in glob.glob(image_pattern) if f.endswith(IMAGE_EXTENSION)]
+        mask_folder_pattern = os.path.join(data_dir, "masks*")
+        self.mask_folders = [os.path.basename(f) for f in glob.glob(mask_folder_pattern) if os.path.isdir(f)]
+            
+            
         
-        print(f"Found {len(self.image_files)} image-mask pairs in {data_dir}")
+        # # Filter to get only base images (not ground truth or mask files)
+        # self.image_files = []
+        # for file in all_files:
+        #     filename = os.path.basename(file)
+        #     if not filename.endswith('_gt.jpg') and not filename.endswith('_mask.jpg'):
+        #         base_name = filename.replace('.jpg', '')
+        #         mask_file = os.path.join(data_dir, f"{base_name}_mask.jpg")
+        #         if os.path.exists(mask_file):
+        #             self.image_files.append(file)
+        
+        # print(f"Found {len(self.image_files)} image-mask pairs in {data_dir}")
     
     def __len__(self):
         return len(self.image_files)
@@ -56,32 +67,36 @@ class HandSegmentationDataset(Dataset):
         # Load image
         image_path = self.image_files[idx]
         image = Image.open(image_path).convert('RGB')
+        image_name = os.path.basename(image_path)
+        masks = []
+        for mask_folder in self.mask_folders:
+            mask_path = os.path.join(self.data_dir, mask_folder, image_name)
+            masks.append(Image.open(mask_path).convert('L'))
         
-        # Load corresponding mask
-        base_name = os.path.basename(image_path).replace('.jpg', '')
-        mask_path = os.path.join(self.data_dir, f"{base_name}_mask.jpg")
-        mask = Image.open(mask_path).convert('L')  # Convert to grayscale
-        
+        # base_name = os.path.basename(image_path).replace('.jpg', '')
+        # mask_path = os.path.join(self.data_dir, f"{base_name}_mask.jpg")
+        # mask = Image.open(mask_path).convert('L')  # Convert to grayscale
+        masks = np.array(masks)
         # Apply transforms
         if self.target_transform:
             # transform the mask
-            mask = self.target_transform(mask)
+            masks = self.target_transform(masks)
             
         # image, mask = Image_tv(image), Mask_tv(mask)
-        mask = Mask_tv(mask)
+        masks = Mask_tv(masks)
         
         if self.transform:
             # print(f"Image dtype: {image.dtype}, shape: {image.shape}")
             # print(f"Image min/max: {image.min()}, {image.max()}")
-            image, mask = self.transform(image, mask)
+            image, masks = self.transform(image, masks)
         else:
             # Convert mask to tensor and normalize to 0-1 range
-            mask = torch.from_numpy(np.array(mask)).float() / 255.0
+            masks = torch.from_numpy(np.array(masks)).float() / 255.0
             # Convert to binary mask (threshold at 0.5)
-            mask = (mask > 0.5).float()
-            mask = mask.unsqueeze(0)  # Add channel dimension
+            masks = (masks > 0.5).float()
+            masks = masks.unsqueeze(0)  # Add channel dimension
         
-        return image, mask
+        return image, masks
     
 class HandSegDataModule(pl.LightningDataModule):
     def __init__(self, datadir, train_batch_size, val_batch_size, train_transforms, val_transforms,mask_transforms):
@@ -109,7 +124,7 @@ class HandSegDataModule(pl.LightningDataModule):
         
 
     def train_dataloader(self):
-        return DataLoader(self.train, batch_size=self.train_batch_size, num_workers=8, shuffle=True, pin_memory=True)
+        return DataLoader(self.train, batch_size=self.train_batch_size, num_workers=12, shuffle=True, pin_memory=True)
 
     def val_dataloader(self):
         return DataLoader(self.val, batch_size=self.val_batch_size, num_workers=4)
@@ -133,7 +148,8 @@ class DeepLabLightningModule(pl.LightningModule):
 
                 arch=None,
                  encoder_name=None,
-                 classes=2 
+                 classes=2,
+                 mask_folders = ['masks_hand_signature', 'masks_seal']
                  ):
         super().__init__()
         self.save_hyperparameters()
@@ -143,6 +159,19 @@ class DeepLabLightningModule(pl.LightningModule):
         self.weight_decay = weight_decay
         
         # Initialize model
+        
+        # ahhh
+        # preprocessing = A.Compose.from_pretrained(checkpoint)
+        # self.model = deeplabv3plus_mobilenet(
+        #     num_classes=num_classes, 
+        #     output_stride=output_stride, 
+        #     pretrained_backbone=True
+        # )
+        
+        # self.model = networks.model.__dict__["deeplabv3plus_mobilenet"](num_classes=19, output_stride=output_stride)
+        # self.model.load_state_dict(torch.load("/home/treerspeaking/src/python/hand_seg/pretrained_weight/best_deeplabv3plus_mobilenet_cityscapes_os16.pth", weights_only=False )['model_state'])
+    
+
         self.model = smp.create_model(
             arch=arch,
             encoder_name=encoder_name,
@@ -152,39 +181,14 @@ class DeepLabLightningModule(pl.LightningModule):
         
         # checkpoint = "smp-hub/segformer-b0-512x512-ade-160k"
         # model = smp.from_pretrained(checkpoint).eval().to(device)
-        # ahhh
-        # preprocessing = A.Compose.from_pretrained(checkpoint)
-        # self.model = deeplabv3plus_mobilenet(
-        #     num_classes=num_classes, 
-        #     output_stride=output_stride, 
-        #     pretrained_backbone=True
-        # )
-
         
         # Load pretrained weights if provided
         
         # Loss function - use CrossEntropyLoss for segmentation
         # self.criterion = nn.CrossEntropyLoss(ignore_index=255)
-        self.criterion = FocalLossV2(alpha=1.0, gamma=3.0, reduction='mean',ignore_index=255)
-        
-        # Metrics for logging
-        self.train_iou_sum = 0
-        self.train_acc_sum = 0
-        self.train_f1_sum = 0
-        self.train_precision_sum = 0
-        self.train_recall_sum = 0
-        self.train_class0_acc_sum = 0
-        self.train_class1_acc_sum = 0
-        self.train_count = 0
-        
-        self.val_iou_sum = 0
-        self.val_acc_sum = 0
-        self.val_f1_sum = 0
-        self.val_precision_sum = 0
-        self.val_recall_sum = 0
-        self.val_class0_acc_sum = 0
-        self.val_class1_acc_sum = 0
-        self.val_count = 0
+        # self.criterion = FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')  
+        # self.criterion = nn.BCEWithLogitsLoss( reduction='mean')
+        # self.criterion = FocalLossV2(alpha=1.0, gamma=3.0, reduction='mean',ignore_index=255)
     
     def forward(self, x):
         return self.model(x)
@@ -192,47 +196,30 @@ class DeepLabLightningModule(pl.LightningModule):
     def on_train_start(self):
         return save_train("logs/hand_segmentation")
     
-    def calculate_metrics(self, pred, target):
+    def _log_each_class_metric(self, stage:str, metrics: List[float], metric_name: str, on_step: bool, on_epoch: bool):
+        for i, class_name in enumerate(self.trainer.datamodule.val.mask_folders): 
+            self.log(f'{stage}/{metric_name}_{class_name}', metrics[:, i].mean(), on_step, on_epoch)
+    
+    def _calculate_and_log_metrics(self, stage, pred, target, on_step, on_epoch):
         """Calculate IoU, accuracy, F1, precision, recall, and per-class accuracy metrics."""
-        pred_mask = torch.argmax(pred, dim=1)
-        target_mask = target.squeeze(1).long()
+        tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='binary', threshold=0.5)
         
-        # Calculate overall accuracy
-        correct = (pred_mask == target_mask).float()
-        accuracy = correct.mean()
+        iou_score = smp.metrics.iou_score(tp, fp, fn, tn, reduction="none")
+        f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="none")
         
-        # Calculate per-class accuracy
-        # Class 0 (background) accuracy
-        class0_mask = (target_mask == 0)
-        if class0_mask.sum() > 0:
-            class0_correct = ((pred_mask == 0) & (target_mask == 0)).float().sum()
-            class0_accuracy = class0_correct / class0_mask.sum().float()
-        else:
-            class0_accuracy = torch.tensor(0.0, device=pred.device)
+        iou_score_macro = smp.metrics.iou_score(tp, fp, fn, tn, reduction="macro")
+        accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction="macro")
+        f1_score_macro = smp.metrics.f1_score(tp, fp, fn, tn, reduction="macro")
+        recall = smp.metrics.recall(tp, fp, fn, tn, reduction="macro")
+        precision = smp.metrics.precision(tp, fp, fn, tn, reduction="macro")
         
-        # Class 1 (hand) accuracy
-        class1_mask = (target_mask == 1)
-        if class1_mask.sum() > 0:
-            class1_correct = ((pred_mask == 1) & (target_mask == 1)).float().sum()
-            class1_accuracy = class1_correct / class1_mask.sum().float()
-        else:
-            class1_accuracy = torch.tensor(0.0, device=pred.device)
-        
-        # Calculate IoU for foreground class (class 1)
-        intersection = ((pred_mask == 1) & (target_mask == 1)).float().sum()
-        union = ((pred_mask == 1) | (target_mask == 1)).float().sum()
-        iou = intersection / (union + 1e-8)
-        
-        # Calculate precision, recall, and F1 for foreground class (class 1)
-        true_positives = intersection  # Already calculated above
-        predicted_positives = (pred_mask == 1).float().sum()
-        actual_positives = (target_mask == 1).float().sum()
-        
-        precision = true_positives / (predicted_positives + 1e-8)
-        recall = true_positives / (actual_positives + 1e-8)
-        f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
-        
-        return accuracy, iou, f1, precision, recall, class0_accuracy, class1_accuracy
+        self._log_each_class_metric(stage, iou_score, "iou", on_step, on_epoch)
+        self._log_each_class_metric(stage, f1_score, "f1", on_step, on_epoch)
+        self.log(f'{stage}/accuracy', accuracy, on_step=True, on_epoch=True)
+        self.log(f'{stage}/iou', iou_score_macro, on_step=True, on_epoch=True)
+        self.log(f'{stage}/f1', f1_score_macro, on_step=True, on_epoch=True)
+        self.log(f'{stage}/precision', precision, on_step=True, on_epoch=True)
+        self.log(f'{stage}/recall', recall, on_step=True, on_epoch=True)
     
     def training_step(self, batch, batch_idx):
         images, masks = batch
@@ -244,34 +231,15 @@ class DeepLabLightningModule(pl.LightningModule):
         if outputs.shape[2:] != masks.shape[2:]:
             outputs = F.interpolate(outputs, size=masks.shape[2:], mode='bilinear', align_corners=False)
         
-        # Convert masks to proper format for CrossEntropyLoss
-        targets = masks.squeeze(1).long()
+        # Convert masks to proper format for BCE
+        targets = masks
+        outputs_sigmoid = torch.sigmoid(outputs)
         
         # Calculate loss
         loss = self.criterion(outputs, targets)
         
-        # Calculate metrics
-        accuracy, iou, f1, precision, recall, class0_acc, class1_acc = self.calculate_metrics(outputs, masks)
-        
-        # Update running sums
-        self.train_iou_sum += iou.item()
-        self.train_acc_sum += accuracy.item()
-        self.train_f1_sum += f1.item()
-        self.train_precision_sum += precision.item()
-        self.train_recall_sum += recall.item()
-        self.train_class0_acc_sum += class0_acc.item()
-        self.train_class1_acc_sum += class1_acc.item()
-        self.train_count += 1
-        
         # Log metrics
-        self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log('train/accuracy', accuracy, on_step=True, on_epoch=True)
-        self.log('train/iou', iou, on_step=True, on_epoch=True)
-        self.log('train/f1', f1, on_step=True, on_epoch=True)
-        self.log('train/precision', precision, on_step=True, on_epoch=True)
-        self.log('train/recall', recall, on_step=True, on_epoch=True)
-        self.log('train/class0_accuracy', class0_acc, on_step=True, on_epoch=True)
-        self.log('train/class1_accuracy', class1_acc, on_step=True, on_epoch=True)
+        self._calculate_and_log_metrics("train", outputs_sigmoid, targets, True, True)
         
         return loss
     
@@ -285,92 +253,17 @@ class DeepLabLightningModule(pl.LightningModule):
         if outputs.shape[2:] != masks.shape[2:]:
             outputs = F.interpolate(outputs, size=masks.shape[2:], mode='bilinear', align_corners=False)
         
-        # Convert masks to proper format for CrossEntropyLoss
-        targets = masks.squeeze(1).long()
+        # Convert masks to proper format for BCE
+        targets = masks
+        outputs_sigmoid = torch.sigmoid(outputs)
         
         # Calculate loss
         loss = self.criterion(outputs, targets)
         
-        # Calculate metrics
-        accuracy, iou, f1, precision, recall, class0_acc, class1_acc = self.calculate_metrics(outputs, masks)
-        
-        # Update running sums
-        self.val_iou_sum += iou.item()
-        self.val_acc_sum += accuracy.item()
-        self.val_f1_sum += f1.item()
-        self.val_precision_sum += precision.item()
-        self.val_recall_sum += recall.item()
-        self.val_class0_acc_sum += class0_acc.item()
-        self.val_class1_acc_sum += class1_acc.item()
-        self.val_count += 1
-        
         # Log metrics
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val/accuracy', accuracy, on_step=False, on_epoch=True)
-        self.log('val/iou', iou, on_step=False, on_epoch=True)
-        self.log('val/f1', f1, on_step=False, on_epoch=True)
-        self.log('val/precision', precision, on_step=False, on_epoch=True)
-        self.log('val/recall', recall, on_step=False, on_epoch=True)
-        self.log('val/class0_accuracy', class0_acc, on_step=False, on_epoch=True)
-        self.log('val/class1_accuracy', class1_acc, on_step=False, on_epoch=True)
+        self._calculate_and_log_metrics("val", outputs_sigmoid, targets, False, True)
         
         return loss
-    
-    def on_train_epoch_end(self):
-        if self.train_count > 0:
-            avg_iou = self.train_iou_sum / self.train_count
-            avg_acc = self.train_acc_sum / self.train_count
-            avg_f1 = self.train_f1_sum / self.train_count
-            avg_precision = self.train_precision_sum / self.train_count
-            avg_recall = self.train_recall_sum / self.train_count
-            avg_class0_acc = self.train_class0_acc_sum / self.train_count
-            avg_class1_acc = self.train_class1_acc_sum / self.train_count
-            
-            self.log('train/epoch_iou', avg_iou)
-            self.log('train/epoch_accuracy', avg_acc)
-            self.log('train/epoch_f1', avg_f1)
-            self.log('train/epoch_precision', avg_precision)
-            self.log('train/epoch_recall', avg_recall)
-            self.log('train/epoch_class0_accuracy', avg_class0_acc)
-            self.log('train/epoch_class1_accuracy', avg_class1_acc)
-        
-        # Reset counters
-        self.train_iou_sum = 0
-        self.train_acc_sum = 0
-        self.train_f1_sum = 0
-        self.train_precision_sum = 0
-        self.train_recall_sum = 0
-        self.train_class0_acc_sum = 0
-        self.train_class1_acc_sum = 0
-        self.train_count = 0
-    
-    def on_validation_epoch_end(self):
-        if self.val_count > 0:
-            avg_iou = self.val_iou_sum / self.val_count
-            avg_acc = self.val_acc_sum / self.val_count
-            avg_f1 = self.val_f1_sum / self.val_count
-            avg_precision = self.val_precision_sum / self.val_count
-            avg_recall = self.val_recall_sum / self.val_count
-            avg_class0_acc = self.val_class0_acc_sum / self.val_count
-            avg_class1_acc = self.val_class1_acc_sum / self.val_count
-            
-            self.log('val/epoch_iou', avg_iou)
-            self.log('val/epoch_accuracy', avg_acc)
-            self.log('val/epoch_f1', avg_f1)
-            self.log('val/epoch_precision', avg_precision)
-            self.log('val/epoch_recall', avg_recall)
-            self.log('val/epoch_class0_accuracy', avg_class0_acc)
-            self.log('val/epoch_class1_accuracy', avg_class1_acc)
-        
-        # Reset counters
-        self.val_iou_sum = 0
-        self.val_acc_sum = 0
-        self.val_f1_sum = 0
-        self.val_precision_sum = 0
-        self.val_recall_sum = 0
-        self.val_class0_acc_sum = 0
-        self.val_class1_acc_sum = 0
-        self.val_count = 0
     
     def configure_optimizers(self):
         # Use AdamW optimizer for better convergence
@@ -426,15 +319,15 @@ def create_data_transforms(input_size=512):
     # Training transforms with augmentation
     train_transform = v2.Compose([
         # v2.Resize((input_size, input_size)),
+        v2.ToTensor(),
         v2.RandomResizedCrop((input_size, input_size), scale=(0.4, 1.0)),
         # v2.Resize((input_size, input_size)),
-        v2.ToTensor(),
         v2.ColorJitter(brightness=0.1, contrast=0.2, saturation=0.2, hue=0.2),
         # v2.ColorJitter(brightness=0.1, contrast=0.3, saturation=0.3, hue=0.5),
         # v2.RandomPhotometricDistort(),
-        v2.RandomHorizontalFlip(p=0.5),
-        v2.RandomVerticalFlip(p=0.5),
-        v2.RandomRotation(90),
+        # v2.RandomHorizontalFlip(p=0.5),
+        # v2.RandomVerticalFlip(p=0.5),
+        v2.RandomRotation(360),
         v2.RandomGrayscale(p=0.1),
         v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
@@ -449,9 +342,10 @@ def create_data_transforms(input_size=512):
     # Target transform for masks
     target_transform = v2.Compose([
         # v2.Resize((input_size, input_size), interpolation=v2.InterpolationMode.NEAREST),
-        v2.Lambda(lambda x: torch.from_numpy(np.array(x)).float() / 255.0),
+        v2.Lambda(lambda x: torch.from_numpy(np.array(x))),
         v2.Lambda(lambda x: (x > 0.5).float()),
-        v2.Lambda(lambda x: x.unsqueeze(0))
+        # v2.Lambda(lambda x: (x > 0.5).to(torch.int32)),
+        # v2.Lambda(lambda x: x.unsqueeze(0))
     ])
     
     return train_transform, val_transform, target_transform
@@ -532,42 +426,12 @@ def main():
     
     # Create transforms
     train_transform, val_transform, target_transform = create_data_transforms(cfg["input_size"])
-    
-    # Create datasets
-    train_dataset = HandSegmentationDataset(
-        data_dir=os.path.join(cfg["data_root"], 'train'),
-        transform=train_transform,
-        target_transform=target_transform
-    )
-    
-    val_dataset = HandSegmentationDataset(
-        data_dir=os.path.join(cfg["data_root"], 'test'),
-        transform=val_transform,
-        target_transform=target_transform
-    )
-    
-    # Create data loaders
-    # train_loader = DataLoader(
-    #     train_dataset,
-    #     batch_size=args.batch_size,
-    #     shuffle=True,
-    #     num_workers=args.num_workers,
-    #     pin_memory=True,
-    #     drop_last=True
-    # )
-    
-    # val_loader = DataLoader(
-    #     val_dataset,
-    #     batch_size=args.batch_size,
-    #     shuffle=False,
-    #     num_workers=args.num_workers,
-    #     pin_memory=True
-    # )
+
     
     datamodule = HandSegDataModule(os.path.join(cfg["data_root"]), cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
     
-    print(f"Training samples: {len(train_dataset)}")
-    print(f"Validation samples: {len(val_dataset)}")
+    
+    
     
     # Initialize model
     model = DeepLabLightningModule(
@@ -579,6 +443,7 @@ def main():
         # learning_rate=args.learning_rate,
         # weight_decay=args.weight_decay,
         pretrained_path=cfg.get("pretrained_path", None),
+        mask_folders=datamodule.train.mask_folders
         # output_stride=8
 
     )
@@ -587,8 +452,8 @@ def main():
     # ModelCheckpoint for saving best model based on validation IoU
     checkpoint_callback = ModelCheckpoint(
         # dirpath=args.output_dir,
-        filename='best_hand_segmentation_{epoch:02d}_{val/epoch_iou:.4f}',
-        monitor='val/epoch_iou',
+        filename='best_hand_segmentation_{epoch:02d}_{val/iou_epoch:.4f}_{val/f1_epoch:.4f}',
+        monitor='val/iou',
         mode='max',
         save_top_k=3,
         save_last=True,

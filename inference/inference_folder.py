@@ -4,11 +4,12 @@ import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
+import cv2
 # from networks.model import deeplabv3plus_mobilenet
-from train import DeepLabLightningModule
+
+from train import DeepLabLightningModule, HandSegDataModule
 
 import argparse
-import os
 from pathlib import Path
 
 def load_model(checkpoint_path, num_classes=2, output_stride=8):
@@ -41,24 +42,25 @@ def load_model(checkpoint_path, num_classes=2, output_stride=8):
 
 def visualize_results(image, mask, save_path=None):
     """Visualize original image and predicted mask."""
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
+    for i in range(len(mask)):
     # Original image
-    axes[0].imshow(image)
-    axes[0].set_title('Original Image')
-    axes[0].axis('off')
-    
-    # Predicted mask
-    axes[1].imshow(mask, cmap='gray')
-    axes[1].set_title('Predicted Mask')
-    axes[1].axis('off')
-    
-    # Overlay
-    overlay = np.array(image).copy()
-    overlay[mask, 1] = 255  # green channel for hand regions
-    axes[2].imshow(overlay)
-    axes[2].set_title('Overlay')
-    axes[2].axis('off')
+        axes[i ,0].imshow(image)
+        axes[i, 0].set_title('Original Image')
+        axes[i, 0].axis('off')
+        
+        # Predicted mask
+        axes[i, 1].imshow(mask[i], cmap='gray')
+        axes[i, 1].set_title('Predicted Mask')
+        axes[i, 1].axis('off')
+        
+        # Overlay
+        overlay = np.array(image).copy()
+        overlay[mask[i], 1] = 255  # green channel for hand regions
+        axes[i, 2].imshow(overlay)
+        axes[i, 2].set_title('Overlay')
+        axes[i, 2].axis('off')
     
     plt.tight_layout()
     
@@ -88,20 +90,31 @@ def preprocess_image(image_path, input_size=512):
 
 def postprocess_output(output, original_size, input_size=512):
     """Postprocess model output to get final mask."""
-    # Apply softmax to get probabilities
-    probs = F.softmax(output, dim=1)
+    # Apply sigmoid to get probabilities
+    probs = torch.sigmoid(output)
     
-    # Get predicted mask (argmax)
-    pred_mask = torch.argmax(probs, dim=1).squeeze(0)
+    # Get predicted mask (threshold at 0.5)
+    pred_mask = probs >= 0.5
     
-    # Convert to numpy
-    mask_np = pred_mask.cpu().numpy().astype(np.uint8)
+    # Convert to numpy and remove only batch dimension
+    mask_np = pred_mask.squeeze(0).cpu().numpy().astype(np.uint8)
     
-    # Resize back to original size
-    mask_pil = Image.fromarray(mask_np * 255, mode='L')
-    mask_pil = mask_pil.resize(original_size, Image.NEAREST)
+    # Handle multi-channel case
+    if mask_np.ndim == 3:  # [channels, height, width]
+        # Transpose to [height, width, channels] for cv2
+        mask_np = mask_np.transpose(1, 2, 0)
+        # Resize all channels
+        mask_resized = cv2.resize(mask_np, original_size, interpolation=cv2.INTER_NEAREST)
+        # If single channel after resize, remove the channel dimension
+        if mask_resized.ndim == 3 and mask_resized.shape[2] == 1:
+            mask_resized = mask_resized.squeeze(2)
+        mask_resized = mask_resized.transpose(2,0,1)
+    else:  # [height, width]
+        # Single channel case
+        mask_resized = cv2.resize(mask_np, original_size, interpolation=cv2.INTER_NEAREST)
     
-    return np.array(mask_pil) > 127  # Convert back to boolean mask
+    # Convert back to boolean mask
+    return mask_resized.astype(bool)
 
 def main():
     parser = argparse.ArgumentParser(description='Hand Segmentation Inference')
@@ -124,6 +137,8 @@ def main():
     
     out_folder.mkdir(parents=True, exist_ok=True)
     
+    
+    
     for dir in [p for p in folder.iterdir() if p.is_dir()]:
         out_dir = out_folder / dir.name
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -142,12 +157,8 @@ def main():
             visualize_results(image, final_mask, save_path=out_path)
             
             # image.save(out_dir / f"{f.name}.png")
-            final_mask = Image.fromarray((final_mask * 255).astype(np.uint8))
+            # final_mask = Image.fromarray((final_mask * 255).astype(np.uint8))
             # final_mask.save(out_dir / f"{f.name} -  mask.png")
-            
-        
-        
-        
         
 if __name__ == '__main__':
     main()

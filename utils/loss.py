@@ -58,3 +58,27 @@ class FocalLossV2(torch.nn.Module):
             return focal_loss.sum()
         else:
             return focal_loss
+        
+        
+class FocalLossBCE(torch.nn.Module):
+    
+    def __init__(self, alpha=1.0, gamma=2.0, reduction='mean'):
+        super(FocalLossBCE, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+        
+    def forward(self, inputs, targets):
+        
+        bce =  F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+        p = torch.sigmoid(inputs)
+        pt = p * targets + (1 - p) * (1 - targets)
+        # focal_weight = (1 - inputs) ** self.gamma 
+        if self.reduction == "mean":
+            return (bce * ((1 - pt) ** self.gamma)).mean()
+        elif self.reduction == "sum":
+            return (bce * ((1 - pt) ** self.gamma)).sum()
+        else:
+            return bce * (1 - pt) ** self.gamma
+        
+    

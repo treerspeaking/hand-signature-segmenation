@@ -1,7 +1,9 @@
-python inference_folder.py --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_50/checkpoints/best_hand_segmentation_epoch=91_val/epoch_iou=0.8302.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./out-deeplabv3-old-base-voc
+# python inference_folder.py --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_50/checkpoints/best_hand_segmentation_epoch=91_val/epoch_iou=0.8302.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./inference/out-deeplabv3-old-base-voc
 
-# python inference_folder.py --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_42/checkpoints/best_hand_segmentation_epoch=80_val/epoch_iou=0.8064.ckptt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./out-segformer-base
+python -m inference.inference_folder --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_57/checkpoints/best_hand_segmentation_epoch=44_val/epoch_iou=0.0000.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./inference/out-unet-base
 
-# python inference_folder.py --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_43/checkpoints/best_hand_segmentation_epoch=45_val/epoch_iou=0.8286.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./out-unetplusplus-base
+# python -m inference.inference_folder --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_54/checkpoints/best_hand_segmentation_epoch=98_val/epoch_iou=0.8084.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./inference/out-segformer-base
 
-# python inference_folder.py --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_44/checkpoints/best_hand_segmentation_epoch=88_val/epoch_iou=0.8206.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./out-deeplabv3-base
+# python -m inference.inference_folder --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_55/checkpoints/best_hand_segmentation_epoch=24_val/epoch_iou=0.8324.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./inference/out-unetplusplus-base
+
+# python -m inference.inference_folder --checkpoint /home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_56/checkpoints/best_hand_segmentation_epoch=91_val/epoch_iou=0.8160.ckpt --folder /home/treerspeaking/src/python/hand_seg/encoded_data --output ./inference/out-deeplabv3-base
