@@ -1,0 +1,1 @@
+python -m train.train --config /home/treerspeaking/src/python/hand_seg/config/deeplabv3plus.yaml

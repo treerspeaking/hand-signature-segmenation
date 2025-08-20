@@ -1,6 +1,5 @@
 import os
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
@@ -24,7 +23,7 @@ import glob
 from typing import List
 
 from utils.ramp import polynomialRamp
-from utils.loss import FocalLossV2, FocalLossBCE
+from utils.loss import FocalLossV2, FocalLossBCE, CombineLoss
 
 IMAGE_EXTENSION = (".png", ".jpg", ".jpeg")
 
@@ -110,6 +109,7 @@ class HandSegDataModule(pl.LightningDataModule):
         self.train = HandSegmentationDataset(os.path.join(datadir, 'train'), transform=self.train_transforms, target_transform=self.mask_transforms)
         self.val = HandSegmentationDataset(os.path.join(datadir, 'test'), transform=self.val_transforms, target_transform=self.mask_transforms)
         self.num_iter = math.ceil(len(self.train) / train_batch_size)
+        torch.nn.CrossEntropyLoss
         
     
     def setup(self, stage: str):
@@ -178,6 +178,7 @@ class DeepLabLightningModule(pl.LightningModule):
             in_channels=3,
             classes=classes
         )
+        # smp.losses.DiceLoss
         
         # checkpoint = "smp-hub/segformer-b0-512x512-ade-160k"
         # model = smp.from_pretrained(checkpoint).eval().to(device)
@@ -187,7 +188,14 @@ class DeepLabLightningModule(pl.LightningModule):
         # Loss function - use CrossEntropyLoss for segmentation
         # self.criterion = nn.CrossEntropyLoss(ignore_index=255)
         # self.criterion = FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')  
-        # self.criterion = nn.BCEWithLogitsLoss( reduction='mean')
+        smp.losses.JaccardLoss
+        self.criterion = CombineLoss([
+            [1, FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')],
+            [1, smp.losses.DiceLoss(mode=smp.losses.MULTILABEL_MODE)],
+            [1, smp.losses.JaccardLoss(mode=smp.losses.MULTILABEL_MODE)],
+            ]
+            )
+        # self.criterion = torch.nn.BCEWithLogitsLoss( reduction='mean')
         # self.criterion = FocalLossV2(alpha=1.0, gamma=3.0, reduction='mean',ignore_index=255)
     
     def forward(self, x):
@@ -202,7 +210,7 @@ class DeepLabLightningModule(pl.LightningModule):
     
     def _calculate_and_log_metrics(self, stage, pred, target, on_step, on_epoch):
         """Calculate IoU, accuracy, F1, precision, recall, and per-class accuracy metrics."""
-        tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='binary', threshold=0.5)
+        tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='multilabel', threshold=0.5)
         
         iou_score = smp.metrics.iou_score(tp, fp, fn, tn, reduction="none")
         f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="none")

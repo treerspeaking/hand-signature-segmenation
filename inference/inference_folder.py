@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import cv2
 # from networks.model import deeplabv3plus_mobilenet
 
-from train import DeepLabLightningModule, HandSegDataModule
+from train.train import DeepLabLightningModule, HandSegDataModule
 
 import argparse
 from pathlib import Path
@@ -56,8 +56,19 @@ def visualize_results(image, mask, save_path=None):
         axes[i, 1].axis('off')
         
         # Overlay
-        overlay = np.array(image).copy()
-        overlay[mask[i], 1] = 255  # green channel for hand regions
+        overlay = np.array(image).copy().astype(np.float32)
+        
+        # Create a colored mask (green for hand regions)
+        colored_mask = np.zeros_like(overlay)
+        colored_mask[mask[i], 1] = 255  # Green channel
+        
+        # Apply opacity blending
+        alpha = 0.3  # Opacity level (0.0 = transparent, 1.0 = opaque)
+        overlay = overlay * (1 - alpha) + colored_mask * alpha
+        overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+        # overlay[mask[i]] = [0, 128, 128]
+        # overlay = overlay.astype(np.uint8)
+        
         axes[i, 2].imshow(overlay)
         axes[i, 2].set_title('Overlay')
         axes[i, 2].axis('off')
@@ -92,6 +103,7 @@ def postprocess_output(output, original_size, input_size=512):
     """Postprocess model output to get final mask."""
     # Apply sigmoid to get probabilities
     probs = torch.sigmoid(output)
+    # probs = torch.softmax(output, dim=1)
     
     # Get predicted mask (threshold at 0.5)
     pred_mask = probs >= 0.5

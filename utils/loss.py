@@ -1,5 +1,9 @@
 import torch
 import torch.nn.functional as F
+from torch.nn.modules.loss import _Loss
+
+from typing import List, Union, Tuple
+from numbers import Real
 
 class FocalLossV2(torch.nn.Module):
     """
@@ -58,8 +62,7 @@ class FocalLossV2(torch.nn.Module):
             return focal_loss.sum()
         else:
             return focal_loss
-        
-        
+
 class FocalLossBCE(torch.nn.Module):
     
     def __init__(self, alpha=1.0, gamma=2.0, reduction='mean'):
@@ -81,4 +84,25 @@ class FocalLossBCE(torch.nn.Module):
         else:
             return bce * (1 - pt) ** self.gamma
         
+        
+class CombineLoss(torch.nn.Module):
+    # def __init__(self, scales_losses: Union[List[List[Real, _Loss]], List[Tuple[Real, _Loss]]]):
+    def __init__(self, scales_losses: List[Tuple[Real, _Loss]]):
+        super().__init__()
+        
+        # Extract scales and losses
+        self.scales = [scale for scale, _ in scales_losses]
+        self.losses = [loss for _, loss in scales_losses]
+        
+        # Convert scales to a tensor and register as buffer
+        # scales_tensor = torch.tensor(scales, dtype=torch.float32)  # Use float32 or adjust dtype as needed
+        # self.register_buffer('scales_buffer', scales_tensor)
+        
+    def forward(self, inputs, targets):
+        total_loss = 0
+        
+        for i in range(len(self.losses)):
+            total_loss += self.scales[i] * self.losses[i](inputs, targets)
+            
+        return total_loss
     

@@ -244,8 +244,8 @@ class SyntheticImageGenerator:
         jittered_image = np.clip(jittered_image.astype(np.int16) + noise, 0, 255).astype(np.uint8)
 
         # Ensure black pixels become visible
-        black_mask = np.all(jittered_image == [0, 0, 0], axis=-1)
-        jittered_image[black_mask] = np.random.randint(50, 256, (black_mask.sum(), 3), dtype=np.uint8)
+        # black_mask = np.all(jittered_image == [0, 0, 0], axis=-1)
+        # jittered_image[black_mask] = np.random.randint(50, 256, (black_mask.sum(), 3), dtype=np.uint8)
         
         # Optional: Add slight hue shift
         if random.random() < 0.5 and len(jittered_image.shape) == 3:  # 50% chance of hue shift

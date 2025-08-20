@@ -1,1 +1,0 @@
-python train.py --config /home/treerspeaking/src/python/hand_seg/config/old_deeplabv3.yaml
