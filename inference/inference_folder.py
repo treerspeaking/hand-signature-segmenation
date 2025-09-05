@@ -76,7 +76,7 @@ def visualize_results(image, mask, save_path=None):
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=250)
         print(f"Results saved to: {save_path}")
     
     # plt.show()
@@ -103,24 +103,23 @@ def postprocess_output(output, original_size, input_size=512):
     """Postprocess model output to get final mask."""
     # Apply sigmoid to get probabilities
     probs = torch.sigmoid(output)
-    # probs = torch.softmax(output, dim=1)
     
     # Get predicted mask (threshold at 0.5)
     pred_mask = probs >= 0.5
     
-    # Convert to numpy and remove only batch dimension
+    # Convert to numpy and remove batch dimension
     mask_np = pred_mask.squeeze(0).cpu().numpy().astype(np.uint8)
     
     # Handle multi-channel case
     if mask_np.ndim == 3:  # [channels, height, width]
-        # Transpose to [height, width, channels] for cv2
-        mask_np = mask_np.transpose(1, 2, 0)
-        # Resize all channels
-        mask_resized = cv2.resize(mask_np, original_size, interpolation=cv2.INTER_NEAREST)
-        # If single channel after resize, remove the channel dimension
-        if mask_resized.ndim == 3 and mask_resized.shape[2] == 1:
-            mask_resized = mask_resized.squeeze(2)
-        mask_resized = mask_resized.transpose(2,0,1)
+        masks_resized = []
+        for c in range(mask_np.shape[0]):
+            # Process each channel separately
+            channel_mask = mask_np[c]
+            # Resize maintaining sharp edges
+            resized = cv2.resize(channel_mask, original_size, interpolation=cv2.INTER_NEAREST)
+            masks_resized.append(resized)
+        mask_resized = np.stack(masks_resized)
     else:  # [height, width]
         # Single channel case
         mask_resized = cv2.resize(mask_np, original_size, interpolation=cv2.INTER_NEAREST)
@@ -152,10 +151,13 @@ def main():
     
     
     for dir in [p for p in folder.iterdir() if p.is_dir()]:
+        
+        if "mask" in str(dir):
+            continue
         out_dir = out_folder / dir.name
         out_dir.mkdir(parents=True, exist_ok=True)
         
-        for f in [f for f in dir.iterdir() if f.is_file()]:
+        for i, f in enumerate([f for f in dir.iterdir() if f.is_file()]):
             input_tensor, image, original_size = preprocess_image(f)
             input_tensor = input_tensor.to(device)
             
@@ -164,7 +166,7 @@ def main():
             
             final_mask = postprocess_output(output, original_size, 512)
             
-            out_path = out_dir / f"{f.name} - visualize.png"
+            out_path = out_dir / f"{i} - visualize.png"
             
             visualize_results(image, final_mask, save_path=out_path)
             

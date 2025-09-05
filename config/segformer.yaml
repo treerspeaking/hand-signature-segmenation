@@ -1,4 +1,5 @@
-data_root: "./dataset/new_dataset"
+name: "5000-augraphy-segformer"
+data_root: "./dataset/dataset-5000-augraphy"
 batch_size: 24                    # Batch size for training
 num_epochs: 100                  # Number of training epochs
 learning_rate: 0.01              # Learning rate

@@ -1,28 +1,32 @@
 import cv2
 import numpy as np
+from PIL import Image, ImageFilter, ImageEnhance
+from my_default_augraphy import my_default_augraphy
+
 import os
 import random
-from PIL import Image, ImageFilter, ImageEnhance
 import glob
 from pathlib import Path
 import argparse
 import json
 from collections import defaultdict
 
+
 class SyntheticImageGenerator:
-    def __init__(self, mask_dir, crop_dir, output_dir="synthetic_output", split_mode=None, split_ratio=0.8, split_file=None):
+    def __init__(self, mask_dir, crop_dir, output_dir="synthetic_output", split_mode=None, split_ratio=0.8, split_file=None, same_color_ratio=0.0):
         self.mask_dir = Path(mask_dir)
         self.crop_dir = Path(crop_dir)
         self.output_dir = Path(output_dir)
         self.split_mode = split_mode  # None, 'train', 'test', or 'create_split'
         self.split_ratio = split_ratio  # Train ratio (0.8 = 80% train, 20% test)
         self.split_file = split_file or "data_split.json"
+        self.same_color_ratio = same_color_ratio  # Ratio of images where seal and hand signature have same color
         
         # Create output directories
-        self.output_dir.mkdir(exist_ok=True)
-        (self.output_dir / "images").mkdir(exist_ok=True)
-        (self.output_dir / "masks_hand_signature").mkdir(exist_ok=True)
-        (self.output_dir / "masks_seal").mkdir(exist_ok=True)
+        self.output_dir.mkdir(exist_ok=True, parents=True)
+        (self.output_dir / "images").mkdir(exist_ok=True, parents=True)
+        (self.output_dir / "masks_hand_signature").mkdir(exist_ok=True, parents=True)
+        (self.output_dir / "masks_seal").mkdir(exist_ok=True, parents=True)
         
         # Load all available images and masks with split handling
         self.hand_signature_data = self._load_class_data_with_split("class_0_hand_signature")
@@ -31,8 +35,13 @@ class SyntheticImageGenerator:
         print(f"Loaded {len(self.hand_signature_data)} hand signature samples")
         print(f"Loaded {len(self.seal_data)} seal samples")
         
+        if self.same_color_ratio > 0:
+            print(f"Same color feature enabled: {self.same_color_ratio*100:.1f}% of images will have matching colors")
+        
         if self.split_mode:
             print(f"Using split mode: {self.split_mode}")
+            
+        self.augraphy = my_default_augraphy()
     
     def _extract_source_id(self, filename):
         """Extract the source image identifier from filename to group crops from same source"""
@@ -277,6 +286,79 @@ class SyntheticImageGenerator:
             hue_shift_range=(-15, 15)      # Larger hue shifts
         )
     
+    def _calculate_mean_color(self, image, mask):
+        """Calculate the mean color of pixels in the masked region"""
+        if len(image.shape) != 3:
+            return None
+        
+        # Create boolean mask
+        bool_mask = mask > 128
+        
+        if not np.any(bool_mask):
+            return None
+        
+        # Calculate mean color for each channel
+        mean_color = np.mean(image[bool_mask], axis=0)
+        return mean_color.astype(np.float32)
+    
+    def _shift_color_to_target(self, image, mask, target_color, current_mean_color):
+        """Shift all pixels in the masked region to have the target mean color"""
+        if len(image.shape) != 3 or current_mean_color is None:
+            return image
+        
+        # Create boolean mask
+        bool_mask = mask > 128
+        
+        if not np.any(bool_mask):
+            return image
+        
+        # Calculate the shift needed
+        color_shift = target_color - current_mean_color
+        
+        # Apply shift to masked pixels
+        result_image = image.copy().astype(np.float32)
+        result_image[bool_mask] += color_shift
+        
+        # Clamp to valid range
+        result_image = np.clip(result_image, 0, 255)
+        
+        return result_image.astype(np.uint8)
+    
+    def _apply_same_color_transformation(self, hand_images, hand_masks, seal_images, seal_masks):
+        """Apply same color transformation to make seal and hand signature have the same color"""
+        if not hand_images or not seal_images:
+            return hand_images, seal_images
+        
+        # Step 1: Sample a random RGB color
+        target_color = np.random.randint(50, 206, 3).astype(np.float32)  # Avoid extreme colors
+        
+        # Step 2: Calculate mean colors for all hand signatures and seals
+        hand_mean_colors = []
+        seal_mean_colors = []
+        
+        for img, mask in zip(hand_images, hand_masks):
+            mean_color = self._calculate_mean_color(img, mask)
+            hand_mean_colors.append(mean_color)
+        
+        for img, mask in zip(seal_images, seal_masks):
+            mean_color = self._calculate_mean_color(img, mask)
+            seal_mean_colors.append(mean_color)
+        
+        # Step 3 & 4: Shift colors of both hand signatures and seals to the target color
+        transformed_hand_images = []
+        for img, mask, mean_color in zip(hand_images, hand_masks, hand_mean_colors):
+            if mean_color is not None:
+                img = self._shift_color_to_target(img, mask, target_color, mean_color)
+            transformed_hand_images.append(img)
+        
+        transformed_seal_images = []
+        for img, mask, mean_color in zip(seal_images, seal_masks, seal_mean_colors):
+            if mean_color is not None:
+                img = self._shift_color_to_target(img, mask, target_color, mean_color)
+            transformed_seal_images.append(img)
+        
+        return transformed_hand_images, transformed_seal_images
+    
     def _rescale_to_canvas_constraints(self, image, mask, canvas_size, min_ratio=0.25, max_ratio=1.0):
         """Rescale image and mask to fit canvas size constraints (25% to 100% of canvas)"""
         h, w = image.shape[:2]
@@ -341,6 +423,25 @@ class SyntheticImageGenerator:
         mask = cv2.warpAffine(mask, rotation_matrix, (w, h), flags=cv2.INTER_NEAREST)
         
         return image, mask
+    
+    def _apply_random_transform_no_color(self, image, mask, canvas_size):
+        """Apply random transformations to image and mask without color jittering"""
+        # First apply canvas size constraints (25% to 100% of canvas)
+        image, mask = self._rescale_to_canvas_constraints(image, mask, canvas_size)
+        
+        # Apply random rotation (no color jittering)
+        angle = random.uniform(-15, 15)
+        h, w = image.shape[:2]
+        center = (w // 2, h // 2)
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        
+        image = cv2.warpAffine(image, rotation_matrix, (w, h), flags=cv2.INTER_LINEAR)
+        mask = cv2.warpAffine(mask, rotation_matrix, (w, h), flags=cv2.INTER_NEAREST)
+        
+        return image, mask
+    
+    def _apply_augraphy(self, image):
+        return self.augraphy(image)
     
     def _blend_images_with_masks(self, background, foreground, fg_mask, position, opacity=0.8):
         """Blend foreground image onto background using mask with opacity"""
@@ -411,6 +512,9 @@ class SyntheticImageGenerator:
         if num_seals is None:
             num_seals = random.randint(1, 2)
         
+        # Determine if this image should have same color for seal and hand signature
+        apply_same_color = random.random() < self.same_color_ratio
+        
         # Create background
         canvas = self._create_background(canvas_size)
         
@@ -418,7 +522,13 @@ class SyntheticImageGenerator:
         hand_signature_mask = np.zeros((canvas_size[1], canvas_size[0]), dtype=np.uint8)
         seal_mask = np.zeros((canvas_size[1], canvas_size[0]), dtype=np.uint8)
         
-        # Add hand signatures
+        # Collect all hand signature images and masks before processing
+        hand_images = []
+        hand_masks = []
+        hand_positions = []
+        hand_opacities = []
+        
+        # Prepare hand signatures
         for i in range(num_hand_signatures):
             if not self.hand_signature_data:
                 continue
@@ -433,8 +543,13 @@ class SyntheticImageGenerator:
             if img is None or mask is None:
                 continue
             
-            # Apply random transformations with color jittering for hand signatures
-            img, mask = self._apply_random_transform(img, mask, canvas_size, object_type="hand_signature")
+            # Apply random transformations (but skip color jittering if same_color will be applied)
+            if apply_same_color:
+                # Apply transformations without color jittering
+                img, mask = self._apply_random_transform_no_color(img, mask, canvas_size)
+            else:
+                # Apply normal transformations with color jittering
+                img, mask = self._apply_random_transform(img, mask, canvas_size, object_type="hand_signature")
             
             # Random position
             max_x = max(0, canvas_size[0] - img.shape[1])
@@ -444,13 +559,18 @@ class SyntheticImageGenerator:
             # Random opacity for blending
             opacity = random.uniform(0.8, 0.99)
             
-            # Blend onto canvas
-            canvas, obj_mask = self._blend_images_with_masks(canvas, img, mask, position, opacity)
-            
-            # Add to hand signature mask
-            hand_signature_mask = np.maximum(hand_signature_mask, obj_mask)
+            hand_images.append(img)
+            hand_masks.append(mask)
+            hand_positions.append(position)
+            hand_opacities.append(opacity)
         
-        # Add seals
+        # Collect all seal images and masks before processing
+        seal_images = []
+        seal_masks_list = []
+        seal_positions = []
+        seal_opacities = []
+        
+        # Prepare seals
         for i in range(num_seals):
             if not self.seal_data:
                 continue
@@ -459,15 +579,19 @@ class SyntheticImageGenerator:
             data = random.choice(self.seal_data)
             
             # Load image and mask
-            # Load image and mask
             img = self._load_and_preprocess_image(data['crop'])
             mask = self._load_and_preprocess_mask(data['mask'])
             
             if img is None or mask is None:
                 continue
             
-            # Apply random transformations with color jittering for seals
-            img, mask = self._apply_random_transform(img, mask, canvas_size, object_type="seal")
+            # Apply random transformations (but skip color jittering if same_color will be applied)
+            if apply_same_color:
+                # Apply transformations without color jittering
+                img, mask = self._apply_random_transform_no_color(img, mask, canvas_size)
+            else:
+                # Apply normal transformations with color jittering
+                img, mask = self._apply_random_transform(img, mask, canvas_size, object_type="seal")
             
             # Random position
             max_x = max(0, canvas_size[0] - img.shape[1])
@@ -477,10 +601,25 @@ class SyntheticImageGenerator:
             # Random opacity for blending
             opacity = random.uniform(0.7, 0.95)
             
-            # Blend onto canvas
+            seal_images.append(img)
+            seal_masks_list.append(mask)
+            seal_positions.append(position)
+            seal_opacities.append(opacity)
+        
+        # Apply same color transformation if enabled
+        if apply_same_color and hand_images and seal_images:
+            hand_images, seal_images = self._apply_same_color_transformation(
+                hand_images, hand_masks, seal_images, seal_masks_list
+            )
+        
+        # Blend hand signatures onto canvas
+        for img, mask, position, opacity in zip(hand_images, hand_masks, hand_positions, hand_opacities):
             canvas, obj_mask = self._blend_images_with_masks(canvas, img, mask, position, opacity)
-            
-            # Add to seal mask
+            hand_signature_mask = np.maximum(hand_signature_mask, obj_mask)
+        
+        # Blend seals onto canvas
+        for img, mask, position, opacity in zip(seal_images, seal_masks_list, seal_positions, seal_opacities):
+            canvas, obj_mask = self._blend_images_with_masks(canvas, img, mask, position, opacity)
             seal_mask = np.maximum(seal_mask, obj_mask)
         
         # Create combined mask (different values for each class)
@@ -492,13 +631,24 @@ class SyntheticImageGenerator:
         overlap_mask = (hand_signature_mask > 0) & (seal_mask > 0)
         combined_mask[overlap_mask] = 2
         
+        # apply augraphy aug 
+        # canvas = self._apply_augraphy(canvas)
+        
         return canvas, hand_signature_mask, seal_mask, combined_mask
     
     def generate_dataset(self, num_images=100, canvas_size=(512, 512)):
         """Generate a dataset of synthetic images"""
         print(f"Generating {num_images} synthetic images...")
         
+        same_color_count = 0
+        
         for i in range(num_images):
+            # Track if same color was applied for statistics
+            original_same_color_ratio = self.same_color_ratio
+            will_apply_same_color = random.random() < self.same_color_ratio
+            if will_apply_same_color:
+                same_color_count += 1
+            
             # Generate synthetic image
             canvas, hand_mask, seal_mask, combined_mask = self.generate_synthetic_image(
                 canvas_size=canvas_size
@@ -522,7 +672,9 @@ class SyntheticImageGenerator:
                 print(f"Generated {i + 1}/{num_images} images")
         
         print(f"Dataset generation complete! Saved to {self.output_dir}")
-        print(f"Generated files:")
+        if self.same_color_ratio > 0:
+            print(f"Applied same color to {same_color_count}/{num_images} images ({same_color_count/num_images*100:.1f}%)")
+        print("Generated files:")
         print(f"  - Images: {self.output_dir}/images/")
         print(f"  - Hand signature masks: {self.output_dir}/masks_hand_signature/")
         print(f"  - Seal masks: {self.output_dir}/masks_seal/")
@@ -545,6 +697,10 @@ def main():
     parser.add_argument("--split_file", default="data_split.json", 
                        help="File to save/load train-test split information")
     
+    # Same color feature arguments
+    parser.add_argument("--same_color_ratio", type=float, default=0.0,
+                       help="Ratio of images where seal and hand signature have the same color (default: 0.0 = disabled, 1.0 = all images)")
+    
     args = parser.parse_args()
     
     # Create generator with split parameters
@@ -554,7 +710,8 @@ def main():
         output_dir=args.output_dir,
         split_mode=args.split_mode,
         split_ratio=args.split_ratio,
-        split_file=args.split_file
+        split_file=args.split_file,
+        same_color_ratio=args.same_color_ratio
     )
     
     # If creating split only, exit after split creation

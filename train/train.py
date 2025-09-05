@@ -72,9 +72,6 @@ class HandSegmentationDataset(Dataset):
             mask_path = os.path.join(self.data_dir, mask_folder, image_name)
             masks.append(Image.open(mask_path).convert('L'))
         
-        # base_name = os.path.basename(image_path).replace('.jpg', '')
-        # mask_path = os.path.join(self.data_dir, f"{base_name}_mask.jpg")
-        # mask = Image.open(mask_path).convert('L')  # Convert to grayscale
         masks = np.array(masks)
         # Apply transforms
         if self.target_transform:
@@ -85,8 +82,6 @@ class HandSegmentationDataset(Dataset):
         masks = Mask_tv(masks)
         
         if self.transform:
-            # print(f"Image dtype: {image.dtype}, shape: {image.shape}")
-            # print(f"Image min/max: {image.min()}, {image.max()}")
             image, masks = self.transform(image, masks)
         else:
             # Convert mask to tensor and normalize to 0-1 range
@@ -109,7 +104,6 @@ class HandSegDataModule(pl.LightningDataModule):
         self.train = HandSegmentationDataset(os.path.join(datadir, 'train'), transform=self.train_transforms, target_transform=self.mask_transforms)
         self.val = HandSegmentationDataset(os.path.join(datadir, 'test'), transform=self.val_transforms, target_transform=self.mask_transforms)
         self.num_iter = math.ceil(len(self.train) / train_batch_size)
-        torch.nn.CrossEntropyLoss
         
     
     def setup(self, stage: str):
@@ -149,7 +143,9 @@ class DeepLabLightningModule(pl.LightningModule):
                 arch=None,
                  encoder_name=None,
                  classes=2,
-                 mask_folders = ['masks_hand_signature', 'masks_seal']
+                 mask_folders = ['masks_hand_signature', 'masks_seal'],
+                 logdir = "logs/hand_segmentation",
+                 cfg=None,
                  ):
         super().__init__()
         self.save_hyperparameters()
@@ -157,6 +153,7 @@ class DeepLabLightningModule(pl.LightningModule):
         self.num_classes = num_classes
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
+        self.logdir = logdir
         
         # Initialize model
         
@@ -178,31 +175,21 @@ class DeepLabLightningModule(pl.LightningModule):
             in_channels=3,
             classes=classes
         )
-        # smp.losses.DiceLoss
-        
-        # checkpoint = "smp-hub/segformer-b0-512x512-ade-160k"
-        # model = smp.from_pretrained(checkpoint).eval().to(device)
-        
-        # Load pretrained weights if provided
-        
-        # Loss function - use CrossEntropyLoss for segmentation
-        # self.criterion = nn.CrossEntropyLoss(ignore_index=255)
-        # self.criterion = FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')  
-        smp.losses.JaccardLoss
+         
+        # smp.losses.
         self.criterion = CombineLoss([
             [1, FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')],
+            # [1, smp.losses.(alpha=1.0, gamma=2.0, reduction='mean')],
             [1, smp.losses.DiceLoss(mode=smp.losses.MULTILABEL_MODE)],
             [1, smp.losses.JaccardLoss(mode=smp.losses.MULTILABEL_MODE)],
             ]
             )
-        # self.criterion = torch.nn.BCEWithLogitsLoss( reduction='mean')
-        # self.criterion = FocalLossV2(alpha=1.0, gamma=3.0, reduction='mean',ignore_index=255)
     
     def forward(self, x):
         return self.model(x)
     
     def on_train_start(self):
-        return save_train("logs/hand_segmentation")
+        save_train(self.logger.log_dir)
     
     def _log_each_class_metric(self, stage:str, metrics: List[float], metric_name: str, on_step: bool, on_epoch: bool):
         for i, class_name in enumerate(self.trainer.datamodule.val.mask_folders): 
@@ -214,20 +201,24 @@ class DeepLabLightningModule(pl.LightningModule):
         
         iou_score = smp.metrics.iou_score(tp, fp, fn, tn, reduction="none")
         f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="none")
+        precision_score = smp.metrics.precision(tp, fp, fn, tn, reduction="none")
+        recall_score = smp.metrics.recall(tp, fp, fn, tn, reduction="none")
         
         iou_score_macro = smp.metrics.iou_score(tp, fp, fn, tn, reduction="macro")
         accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction="macro")
         f1_score_macro = smp.metrics.f1_score(tp, fp, fn, tn, reduction="macro")
-        recall = smp.metrics.recall(tp, fp, fn, tn, reduction="macro")
-        precision = smp.metrics.precision(tp, fp, fn, tn, reduction="macro")
+        recall_macro = smp.metrics.recall(tp, fp, fn, tn, reduction="macro")
+        precision_macro = smp.metrics.precision(tp, fp, fn, tn, reduction="macro")
         
         self._log_each_class_metric(stage, iou_score, "iou", on_step, on_epoch)
         self._log_each_class_metric(stage, f1_score, "f1", on_step, on_epoch)
+        self._log_each_class_metric(stage, precision_score, "precision", on_step, on_epoch)
+        self._log_each_class_metric(stage, recall_score, "recall", on_step, on_epoch)
         self.log(f'{stage}/accuracy', accuracy, on_step=True, on_epoch=True)
         self.log(f'{stage}/iou', iou_score_macro, on_step=True, on_epoch=True)
         self.log(f'{stage}/f1', f1_score_macro, on_step=True, on_epoch=True)
-        self.log(f'{stage}/precision', precision, on_step=True, on_epoch=True)
-        self.log(f'{stage}/recall', recall, on_step=True, on_epoch=True)
+        self.log(f'{stage}/precision', precision_macro, on_step=True, on_epoch=True)
+        self.log(f'{stage}/recall', recall_macro, on_step=True, on_epoch=True)
     
     def training_step(self, batch, batch_idx):
         images, masks = batch
@@ -248,6 +239,8 @@ class DeepLabLightningModule(pl.LightningModule):
         
         # Log metrics
         self._calculate_and_log_metrics("train", outputs_sigmoid, targets, True, True)
+        
+        self.log('train/loss', loss, on_step=True, on_epoch=True)
         
         return loss
     
@@ -271,6 +264,8 @@ class DeepLabLightningModule(pl.LightningModule):
         # Log metrics
         self._calculate_and_log_metrics("val", outputs_sigmoid, targets, False, True)
         
+        self.log('val/loss', loss, on_step=False, on_epoch=True)
+        
         return loss
     
     def configure_optimizers(self):
@@ -279,8 +274,18 @@ class DeepLabLightningModule(pl.LightningModule):
             self.parameters(), 
             lr=0.001667, 
             betas=[0.9, 0.999], 
-            weight_decay=0.0005
+            # weight_decay=0.0005
+            weight_decay=0.001
         )
+        
+        # optimizer = torch.optim.SGD(
+        #     self.parameters(), 
+        #     lr=self.learning_rate, 
+        #     # betas=[0.9, 0.999], 
+        #     momentum=0.9,
+        #     # weight_decay=0.0005
+        #     weight_decay=0.001
+        # )
         
         warm_up_iter = self.trainer.datamodule.num_iter * self.trainer.max_epochs / 9
         warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda steps: polynomialRamp(steps, warm_up_iter, 4.0))
@@ -328,9 +333,10 @@ def create_data_transforms(input_size=512):
     train_transform = v2.Compose([
         # v2.Resize((input_size, input_size)),
         v2.ToTensor(),
+        # v2.RandomResizedCrop((input_size, input_size), scale=(0.4, 1.0)),
         v2.RandomResizedCrop((input_size, input_size), scale=(0.4, 1.0)),
         # v2.Resize((input_size, input_size)),
-        v2.ColorJitter(brightness=0.1, contrast=0.2, saturation=0.2, hue=0.2),
+        # v2.ColorJitter(brightness=0.1, contrast=0.2, saturation=0.2, hue=0.2),
         # v2.ColorJitter(brightness=0.1, contrast=0.3, saturation=0.3, hue=0.5),
         # v2.RandomPhotometricDistort(),
         # v2.RandomHorizontalFlip(p=0.5),
@@ -358,31 +364,34 @@ def create_data_transforms(input_size=512):
     
     return train_transform, val_transform, target_transform
 
-def get_latest_version_folder(base_path):
+
+def get_next_version_folder(base_path):
     pattern = os.path.join(base_path, "version_*")
     version_folders = glob.glob(pattern)
     
-    if not version_folders:
-        return None
-    
-    # Extract version numbers and sort
-    def extract_version(folder_path):
+    # Extract version numbers and find the maximum
+    max_version = -1
+    for folder_path in version_folders:
         folder_name = os.path.basename(folder_path)
         match = re.match(r'version_(\d+)', folder_name)
-        return int(match.group(1)) if match else -1
+        if match:
+            version = int(match.group(1))
+            max_version = max(max_version, version)
     
-    # Return the folder with the highest version number
-    return max(version_folders, key=extract_version)
+    # Return the next version folder path
+    next_version = max_version + 1
+    return os.path.join(base_path, f"version_{next_version}")
 
 def save_train(save_dir):
     save_dir = Path(save_dir)
     
-    newest_folder = get_latest_version_folder(save_dir)
+    # newest_folder = get_latest_version_folder(save_dir)
     
     current_script = Path(__file__)
     
     # Create destination path
-    dest_path = Path(newest_folder) / current_script.name
+    # dest_path = Path(newest_folder) / current_script.name
+    dest_path = save_dir / current_script.name
     
     try:
         # Copy the current script to the latest version folder
@@ -397,39 +406,29 @@ def save_train(save_dir):
     
     
     # return latest_folder
-    
 
+# import builtins
+
+# original_print = builtins.print
+
+# def debug_print(*args, **kwargs):
+#     message = ' '.join(str(arg) for arg in args)
+#     if "Logs will be saved to" in message:
+#         # raise ValueError(f"FOUND MESSAGE: {message}")  # VS Code will break here
+#         breakpoint()
+#         print("hahaha")
+#     return original_print(*args, **kwargs)
+
+# builtins.print = debug_print
 
 def main():
     parser = argparse.ArgumentParser(description='Train DeepLabV3+ for Hand Segmentation')
-    # parser.add_argument('--data_root', type=str, default='./dataset', 
-    #                    help='Root directory of dataset')
-    # parser.add_argument('--pretrained_path', type=str, 
-    #                    default='./pretrained_weight/best_deeplabv3plus_mobilenet_cityscapes_os16.pth',
-    #                    help='Path to pretrained weights')
-    # parser.add_argument('--batch_size', type=int, default=8, 
-    #                    help='Batch size for training')
-    # parser.add_argument('--num_epochs', type=int, default=100, 
-    #                    help='Number of training epochs')
-    # parser.add_argument('--learning_rate', type=float, default=0.01, 
-    #                    help='Learning rate')
-    # parser.add_argument('--weight_decay', type=float, default=1e-4, 
-    #                    help='Weight decay')
-    # parser.add_argument('--input_size', type=int, default=512, 
-    #                    help='Input image size')
-    # parser.add_argument('--num_workers', type=int, default=4, 
-    #                    help='Number of data loader workers')
-    # parser.add_argument('--output_dir', type=str, default='./checkpoints', 
-    #                    help='Output directory for checkpoints')
     parser.add_argument('--config', type=str, 
                        help='config file for training')
-    # parser.add_argument('--log_dir', type=str, default='./logs', 
-    #                    help='Directory for tensorboard logs')
     
     args = parser.parse_args()
     cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
     # Create directories
-    # os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(cfg["log_dir"], exist_ok=True)
     
     # Create transforms
@@ -451,7 +450,8 @@ def main():
         # learning_rate=args.learning_rate,
         # weight_decay=args.weight_decay,
         pretrained_path=cfg.get("pretrained_path", None),
-        mask_folders=datamodule.train.mask_folders
+        mask_folders=datamodule.train.mask_folders,
+        cfg=cfg
         # output_stride=8
 
     )
@@ -472,10 +472,11 @@ def main():
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
     
     # TensorBoard logger
+    version = get_next_version_folder("/home/treerspeaking/src/python/hand_seg/logs/hand_segmentation")
     logger = TensorBoardLogger(
         save_dir=cfg["log_dir"],
         name='hand_segmentation',
-        version=None
+        version=version + "_" +cfg["name"]
     )
     
     # Initialize trainer

@@ -23,12 +23,14 @@
             "name": "debug train.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "train.py",
+            // "program": "/home/treerspeaking/src/python/hand_seg/train/train.py",
+            "module": "train.train",
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "/home/treerspeaking/src/python/hand_seg/config/unet.yaml",
+                "/home/treerspeaking/src/python/hand_seg/config/unetplusplus.yaml",
             ],
+            "justMyCode": false,
         },
         {
             "name": "Python Debugger: Current File",
@@ -36,6 +38,30 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: Debug gen_image.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/gen_img/gen_image.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--split_mode",
+                "train",
+                "--num_images",
+                "5000",
+                "--output_dir",
+                "./dataset/dataset-5000-augraphy/train",
+                "--mask_dir",
+                "mask",
+                "--crop_dir",
+                "mask",
+                "--split_file",
+                "dataset/new_dataset/datasplit.json",
+                "--same_color_ratio",
+                "0.1"
+            ]
         }
     ]
 }
