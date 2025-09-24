@@ -1,0 +1,25 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "inference biref",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/treerspeaking/src/python/hand_seg/zero_shot/BiRefNet/main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--checkpoint",
+                "/home/treerspeaking/src/python/hand_seg/zero_shot/runs/detect/sure-1-hand-detection/weights/best.pt",
+                "--folder",
+                "/home/treerspeaking/src/python/hand_seg/inference/renamed_data",
+                "--output",
+                "/home/treerspeaking/src/python/hand_seg/zero_shot/inference"
+            ],
+            "cwd": "${workspaceFolder}/BiRefNet",
+        }
+    ]
+}

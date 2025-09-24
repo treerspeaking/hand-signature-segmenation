@@ -28,7 +28,20 @@
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "/home/treerspeaking/src/python/hand_seg/config/unetplusplus.yaml",
+                "/home/treerspeaking/src/python/hand_seg/config/old_config.yaml",
+            ],
+            "justMyCode": false,
+        },
+        {
+            "name": "debug train_finetune.py",
+            "type": "debugpy",
+            "request": "launch",
+            // "program": "/home/treerspeaking/src/python/hand_seg/train/train.py",
+            "module": "train.train_finetune",
+            "console": "integratedTerminal",
+            "args": [
+                "--config",
+                "/home/treerspeaking/src/python/hand_seg/config/finetune_unetpluplus.yaml",
             ],
             "justMyCode": false,
         },

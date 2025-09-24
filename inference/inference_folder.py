@@ -6,8 +6,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 # from networks.model import deeplabv3plus_mobilenet
+import segmentation_models_pytorch as smp
 
-from train.train import DeepLabLightningModule, HandSegDataModule
+# from train.train import DeepLabLightningModule, HandSegDataModule
+from train.train import SegmentationLightningModule
+from train.train_finetune import FineTuneLightningModule
 
 import argparse
 from pathlib import Path
@@ -36,7 +39,30 @@ def load_model(checkpoint_path, num_classes=2, output_stride=8):
     # model.load_state_dict(state_dict, strict=False)
     # model.eval()
     # model = DeepLabLightningModule(num_classes=num_classes, output_stride=output_stride).load_from_checkpoint("checkpoint_path")
-    model = DeepLabLightningModule.load_from_checkpoint(checkpoint_path)
+    # model = DeepLabLightningModule.load_from_checkpoint(checkpoint_path)
+    model = smp.create_model(
+            arch="unetplusplus",
+            encoder_name="mobilenet_v2",
+            in_channels=3,
+            classes=1
+        )
+    model = FineTuneLightningModule.load_from_checkpoint(checkpoint_path, model=model)
+    
+    # select_class = 1
+    
+    # # will optimize latter for multiclass if needed
+    # final_seg_weight = model.model.segmentation_head[0].weight
+    # final_seg_bias = model.model.segmentation_head[0].bias
+    
+    # new_conv = torch.nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1)
+    
+    # with torch.no_grad():
+    #     new_conv.weight.copy_(final_seg_weight[select_class])
+    #     new_conv.bias.copy_(final_seg_bias[select_class])
+    
+    # # Replace the segmentation head
+    # model.model.segmentation_head[0] = new_conv
+    
     model.eval()
     return model
 
@@ -166,13 +192,30 @@ def main():
             
             final_mask = postprocess_output(output, original_size, 512)
             
-            out_path = out_dir / f"{i} - visualize.png"
+            # out_path = out_dir / f"{i} - visualize.png"
+            out_path = out_dir / f"{f.name} - visualize.png"
             
             visualize_results(image, final_mask, save_path=out_path)
             
-            # image.save(out_dir / f"{f.name}.png")
-            # final_mask = Image.fromarray((final_mask * 255).astype(np.uint8))
-            # final_mask.save(out_dir / f"{f.name} -  mask.png")
+            image.save(out_dir / f"{f.name}_og.png")
+            
+             # Fix: Convert PIL image to numpy array for proper indexing
+            image_array = np.array(image)
+            
+            # Handle multi-channel mask - use the first channel or combine them
+            if final_mask.ndim == 3:
+                # If multiple channels, use any channel that has True values
+                # combined_mask = np.any(final_mask, axis=0)
+                combined_mask =  final_mask[0]
+            else:
+                combined_mask = final_mask
+            
+            # Apply the mask to set background to white
+            image_array[~combined_mask] = [255, 255, 255]
+            
+            # Convert back to PIL Image and save
+            processed_image = Image.fromarray(image_array)
+            processed_image.save(out_dir / f"{f.name}.png")
         
 if __name__ == '__main__':
     main()

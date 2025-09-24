@@ -1,0 +1,1 @@
+python -m birefnet_inference.main

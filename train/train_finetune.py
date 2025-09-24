@@ -25,11 +25,14 @@ from typing import List
 from utils.ramp import polynomialRamp
 from utils.loss import FocalLossV2, FocalLossBCE, CombineLoss
 from utils.dataset import HandSegDataModule
+from .train import SegmentationLightningModule
 
-class SegmentationLightningModule(pl.LightningModule):
-    """PyTorch Lightning module for hand segmentation training."""
+
+class FineTuneLightningModule(pl.LightningModule):
+    """PyTorch Lightning module for hand segmentation finetuning."""
     
     def __init__(self, 
+                 model,
                  num_classes=2, 
                  learning_rate=0.01, 
                  weight_decay=1e-4,
@@ -44,40 +47,26 @@ class SegmentationLightningModule(pl.LightningModule):
                  cfg=None,
                  ):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=["model"])
         
         self.num_classes = num_classes
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.logdir = logdir
-        
-        # Initialize model
-        
-        # ahhh
-        # preprocessing = A.Compose.from_pretrained(checkpoint)
-        # self.model = deeplabv3plus_mobilenet(
-        #     num_classes=num_classes, 
-        #     output_stride=output_stride, 
-        #     pretrained_backbone=True
+
+        # self.model = smp.create_model(
+        #     arch=arch,
+        #     encoder_name=encoder_name,
+        #     in_channels=3,
+        #     classes=classes
         # )
         
-        # self.model = networks.model.__dict__["deeplabv3plus_mobilenet"](num_classes=19, output_stride=output_stride)
-        # self.model.load_state_dict(torch.load("/home/treerspeaking/src/python/hand_seg/pretrained_weight/best_deeplabv3plus_mobilenet_cityscapes_os16.pth", weights_only=False )['model_state'])
-    
-
-        self.model = smp.create_model(
-            arch=arch,
-            encoder_name=encoder_name,
-            in_channels=3,
-            classes=num_classes
-        )
-         
+        self.model = model
+        
         # smp.losses.
-        # all of the losses is logits
         self.criterion = CombineLoss([
-            # [1, FocalLossV2(alpha=1.0, gamma=2.0, reduction='mean')],
-            # [2.718, FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')],
-            [2.718, smp.losses.FocalLoss(mode=smp.losses.MULTILABEL_MODE, gamma=2.0, reduction='mean')],
+            [1, FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')],
+            # [1, smp.losses.(alpha=1.0, gamma=2.0, reduction='mean')],
             # [1, smp.losses.DiceLoss(mode=smp.losses.MULTILABEL_MODE)],
             # [1, smp.losses.JaccardLoss(mode=smp.losses.MULTILABEL_MODE)],
             ]
@@ -95,11 +84,7 @@ class SegmentationLightningModule(pl.LightningModule):
     
     def _calculate_and_log_metrics(self, stage, pred, target, on_step, on_epoch):
         """Calculate IoU, accuracy, F1, precision, recall, and per-class accuracy metrics."""
-        # tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='multilabel', threshold=0.5)
-        # tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='multilabel')
-        ##### remember to switch back later
-        tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='binary', threshold=0.5)
-        # tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='multiclass', num_classes=2)
+        tp, fp, fn, tn = smp.metrics.get_stats(pred, target.to(torch.uint8), mode='multilabel', threshold=0.5)
         
         iou_score = smp.metrics.iou_score(tp, fp, fn, tn, reduction="none")
         f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="none")
@@ -133,22 +118,16 @@ class SegmentationLightningModule(pl.LightningModule):
             outputs = F.interpolate(outputs, size=masks.shape[2:], mode='bilinear', align_corners=False)
         
         # Convert masks to proper format for BCE
-        # outputs_sigmoid = torch.sigmoid(outputs)
         targets = masks
-        
-        ##### Please remember to delete
-        ###### lord have mercy
-        # targets = masks.squeeze(1).long()
+        outputs_sigmoid = torch.sigmoid(outputs)
         
         # Calculate loss
         loss = self.criterion(outputs, targets)
         
         # Log metrics
-        self._calculate_and_log_metrics("train", outputs, targets, True, True)
-        self.log('train/loss', loss, on_step=True, on_epoch=True)
+        self._calculate_and_log_metrics("train", outputs_sigmoid, targets, True, True)
         
-        ##### Please remember to delete
-        # self._calculate_and_log_metrics("train", torch.argmax(outputs, dim=1), targets, False, True)
+        self.log('train/loss', loss, on_step=True, on_epoch=True)
         
         return loss
     
@@ -164,22 +143,15 @@ class SegmentationLightningModule(pl.LightningModule):
         
         # Convert masks to proper format for BCE
         targets = masks
-        
-        ##### Please remember to delete
-        ###### lord have mercy
-        ####### hmm maybe the problem is with the way the dataset is broadcasted ?
-        # targets = masks.squeeze(1).long()
-        # outputs_sigmoid = torch.sigmoid(outputs)
+        outputs_sigmoid = torch.sigmoid(outputs)
         
         # Calculate loss
         loss = self.criterion(outputs, targets)
         
         # Log metrics
-        self._calculate_and_log_metrics("val", outputs, targets, False, True)
-        self.log('val/loss', loss, on_step=False, on_epoch=True)
+        self._calculate_and_log_metrics("val", outputs_sigmoid, targets, False, True)
         
-        ##### Please remember to delete
-        # self._calculate_and_log_metrics("val", torch.argmax(outputs, dim=1), targets, False, True)
+        self.log('val/loss', loss, on_step=False, on_epoch=True)
         
         return loss
     
@@ -249,13 +221,14 @@ def create_data_transforms(input_size=512):
         # v2.Resize((input_size, input_size)),
         v2.ToTensor(),
         v2.RandomResizedCrop((input_size, input_size), scale=(0.4, 1.0)),
-        # v2.RandomResizedCrop((input_size, input_size), scale=(0.4, 1.0)),
+        # v2.RandomResizedCrop((input_size, input_size), scale=(0.7, 1.0), ratio=(1.5, 2.5)),
         # v2.Resize((input_size, input_size)),
         v2.ColorJitter(brightness=0.1, contrast=0.2, saturation=0.2, hue=0.2),
         # v2.ColorJitter(brightness=0.1, contrast=0.3, saturation=0.3, hue=0.5),
         # v2.RandomPhotometricDistort(),
         v2.RandomHorizontalFlip(p=0.5),
         v2.RandomVerticalFlip(p=0.5),
+        # v2.RandomRotation(360),
         v2.RandomRotation(90),
         v2.RandomGrayscale(p=0.1),
         v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -275,15 +248,6 @@ def create_data_transforms(input_size=512):
         v2.Lambda(lambda x: (x > 0.5).float()),
         # v2.Lambda(lambda x: (x > 0.5).to(torch.int32)),
         # v2.Lambda(lambda x: x.unsqueeze(0))
-    ])
-    
-    
-    # i am gonna regret this in like an hr
-    target_transform = v2.Compose([
-        # v2.Resize((input_size, input_size), interpolation=v2.InterpolationMode.NEAREST),
-        v2.Lambda(lambda x: torch.from_numpy(np.array(x)).float() / 255.0),
-        v2.Lambda(lambda x: (x > 0.5).float()),
-        v2.Lambda(lambda x: x.unsqueeze(0))
     ])
     
     return train_transform, val_transform, target_transform
@@ -358,19 +322,48 @@ def main():
     # Create transforms
     train_transform, val_transform, target_transform = create_data_transforms(cfg["input_size"])
 
-    ##### ye i need to code better
-    # datamodule = HandSegDataModule(cfg["yaml_file"], cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
     
-    ##### old datamodule ?
-    
-    datamodule = HandSegDataModule(os.path.join(cfg["data_root"]), cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
+    datamodule = HandSegDataModule(cfg["yaml_file"], cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
     
     
     
     
     # Initialize model
-    model = SegmentationLightningModule(
-        num_classes=1,  # background and hand
+    # model = FineTuneLightningModule(
+    #     num_classes=2,  # background and hand
+    #     learning_rate=cfg["learning_rate"],
+    #     weight_decay=cfg["weight_decay"],
+    #     arch=cfg["arch"],
+    #     encoder_name=cfg["encoder_name"],
+    #     # learning_rate=args.learning_rate,
+    #     # weight_decay=args.weight_decay,
+    #     pretrained_path=cfg.get("pretrained_path", None),
+    #     mask_folders=datamodule.train.mask_folders,
+    #     cfg=cfg
+    #     # output_stride=8
+
+    # )
+    
+    # easy loading of model
+    
+    model = SegmentationLightningModule.load_from_checkpoint("/home/treerspeaking/src/python/hand_seg/logs/hand_segmentation/version_83_5000-base/checkpoints/best_hand_segmentation_epoch=37_val/iou_epoch=0.8190_val/f1_epoch=0.9004.ckpt")
+    
+    # will optimize latter for multiclass if needed
+    final_seg_weight = model.model.segmentation_head[0].weight
+    final_seg_bias = model.model.segmentation_head[0].bias
+    
+    new_conv = torch.nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1)
+    
+    with torch.no_grad():
+        new_conv.weight.copy_(final_seg_weight[0])
+        new_conv.bias.copy_(final_seg_bias[0])
+    
+    # Replace the segmentation head
+    model.model.segmentation_head[0] = new_conv
+    
+    model = FineTuneLightningModule(
+        model.model, 
+        num_classes=2,  # background and hand
         learning_rate=cfg["learning_rate"],
         weight_decay=cfg["weight_decay"],
         arch=cfg["arch"],
@@ -378,11 +371,11 @@ def main():
         # learning_rate=args.learning_rate,
         # weight_decay=args.weight_decay,
         pretrained_path=cfg.get("pretrained_path", None),
-        # mask_folders=datamodule.train.mask_folders,
+        mask_folders=datamodule.train.mask_folders,
         cfg=cfg
         # output_stride=8
-
-    )
+        )
+    
     
     # Setup callbacks
     # ModelCheckpoint for saving best model based on validation IoU

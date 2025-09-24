@@ -1,0 +1,6 @@
+path: /home/treerspeaking/src/python/hand_seg/dataset/converted-dataset
+# train: train/images
+# val: val/images
+test: ''
+names:
+  0: hand_signature

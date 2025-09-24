@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter, ImageEnhance
 from my_default_augraphy import my_default_augraphy
+import yaml
 
 import os
 import random
@@ -10,6 +11,7 @@ from pathlib import Path
 import argparse
 import json
 from collections import defaultdict
+
 
 
 class SyntheticImageGenerator:
@@ -679,6 +681,39 @@ class SyntheticImageGenerator:
         print(f"  - Hand signature masks: {self.output_dir}/masks_hand_signature/")
         print(f"  - Seal masks: {self.output_dir}/masks_seal/")
         # print(f"  - Combined masks: {self.output_dir}/combined_masks/")
+    
+    def generate_dataset_yaml(self, train_dir="train", val_dir="val"):
+        """Generates a YAML file describing the dataset."""
+        
+        # The YAML file is typically placed one level above the output directory
+        # e.g., if output_dir is 'synthetic_output/train', yaml is in 'synthetic_output'
+        yaml_path = self.output_dir.parent / f"{self.output_dir.parent.name}.yaml"
+        
+        # Define class names. Note: In segmentation, 0 is often background.
+        # The script assigns 1 to hand_signature and 2 to seal.
+        class_names = {
+            0: 'hand_signature',
+            1: 'seal'
+        }
+
+        # Create the data structure for the YAML file
+        dataset_info = {
+            'path': str(self.output_dir.parent.resolve()),
+            'train': str(Path(train_dir) / 'images'),
+            'val': str(Path(val_dir) / 'images'),
+            'test': '',  # Optional
+            'names': class_names
+        }
+
+        # Write the YAML file
+        with open(yaml_path, 'w') as f:
+            yaml.dump(dataset_info, f, sort_keys=False, default_flow_style=False)
+
+        print(f"Generated dataset YAML file: {yaml_path}")
+        print("--- YAML Content ---")
+        with open(yaml_path, 'r') as f:
+            print(f.read())
+        print("--------------------")
 
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic images with overlapping hand signatures and seals")
@@ -723,7 +758,10 @@ def main():
     generator.generate_dataset(
         num_images=args.num_images,
         canvas_size=(args.canvas_width, args.canvas_height)
+        
     )
+    
+    generator.generate_dataset_yaml(train_dir="train", val_dir="val")
 
 if __name__ == "__main__":
     main()

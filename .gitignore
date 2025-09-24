@@ -212,3 +212,7 @@ dataset/
 *.png
 *.jpeg
 *.jpg
+*runs*
+*sure-1*
+.pt
+

@@ -18,7 +18,7 @@ class FocalLossV2(torch.nn.Module):
     
     def forward(self, inputs, targets):
         # Input validation
-        assert not torch.isnan(inputs).any(), "Input contains NaN"
+        # assert not torch.isnan(inputs).any(), "Input contains NaN"
         # assert not torch.isinf(inputs).any(), "Input contains Inf"
         
         # Compute cross entropy loss

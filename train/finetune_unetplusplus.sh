@@ -1,0 +1,1 @@
+python -m train.train_finetune --config /home/treerspeaking/src/python/hand_seg/config/finetune_unetpluplus.yaml

@@ -1,5 +1,6 @@
 name: "5000-augraphy-segformer"
-data_root: "./dataset/dataset-5000-augraphy"
+# data_root: "./dataset/dataset-5000-augraphy"
+yaml_file: "/home/treerspeaking/src/python/hand_seg/dataset/dataset-5000-base/dataset-5000-base.yaml"
 batch_size: 24                    # Batch size for training
 num_epochs: 100                  # Number of training epochs
 learning_rate: 0.01              # Learning rate

@@ -1,5 +1,6 @@
-# data_root: "./dataset/old_dataset"
-yaml_file: "/home/treerspeaking/src/python/hand_seg/dataset/dataset-5000-base/dataset-5000-base.yaml"
+name: "train-old_dataset"
+
+data_root: "/home/treerspeaking/src/python/hand_seg/hand-signature-segmenation/dataset"
 batch_size: 8                    # Batch size for training
 num_epochs: 100                  # Number of training epochs
 learning_rate: 0.01              # Learning rate
@@ -7,6 +8,5 @@ weight_decay: 0.0001             # Weight decay (1e-4)
 input_size: 512                  # Input image size
 num_workers: 4                   # Number of data loader workers
 log_dir: "./logs"
-arch: "DeepLabV3Plus_old"
+arch: "UnetPlusPlus"
 encoder_name: "mobilenet_v2"
-pretrained_path: "/home/treerspeaking/src/python/hand_seg/pretrained_weight/best_deeplabv3plus_mobilenet_cityscapes_os16.pth"
