@@ -1,7 +1,14 @@
 {
     "version": "0.2.0",
     "configurations": [
-        
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${fileDirname}"
+        },
         {
             "name": "Hand Segmentation Inference",
             "type": "python",
@@ -29,6 +36,19 @@
             "args": [
                 "--config",
                 "/home/treerspeaking/src/python/hand_seg/config/old_config.yaml",
+            ],
+            "justMyCode": false,
+        },
+        {
+            "name": "debug train.py new",
+            "type": "debugpy",
+            "request": "launch",
+            // "program": "/home/treerspeaking/src/python/hand_seg/train/train.py",
+            "module": "train.train",
+            "console": "integratedTerminal",
+            "args": [
+                "--config",
+                "/home/treerspeaking/src/python/hand_seg/config/unetplusplus.yaml",
             ],
             "justMyCode": false,
         },

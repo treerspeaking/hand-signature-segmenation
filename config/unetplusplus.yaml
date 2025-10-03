@@ -1,4 +1,4 @@
-name: "train-old_dataset"
+name: "train-old_dataset_debug_data_loader"
 # data_root: "./dataset/dataset-5000-base"
 yaml_file: "/home/treerspeaking/src/python/hand_seg/dataset/converted-dataset/converted-dataset.yaml"
 batch_size: 8                 # Batch size for training

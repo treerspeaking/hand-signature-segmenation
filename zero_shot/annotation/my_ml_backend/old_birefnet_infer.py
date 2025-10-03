@@ -6,8 +6,7 @@ from IPython.display import display
 import numpy as np
 import matplotlib.pyplot as plt
 
-from zero_shot.BiRefNet.models.birefnet import BiRefNet
-# from zero_shot import BiRefNet
+from BiRefNet.models.birefnet import BiRefNet
 from ultralytics.models import YOLO
 
 import argparse

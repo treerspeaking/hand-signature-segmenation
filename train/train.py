@@ -78,8 +78,8 @@ class SegmentationLightningModule(pl.LightningModule):
             # [1, FocalLossV2(alpha=1.0, gamma=2.0, reduction='mean')],
             # [2.718, FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')],
             [2.718, smp.losses.FocalLoss(mode=smp.losses.MULTILABEL_MODE, gamma=2.0, reduction='mean')],
-            # [1, smp.losses.DiceLoss(mode=smp.losses.MULTILABEL_MODE)],
-            # [1, smp.losses.JaccardLoss(mode=smp.losses.MULTILABEL_MODE)],
+            [1, smp.losses.DiceLoss(mode=smp.losses.MULTILABEL_MODE)],
+            [1, smp.losses.JaccardLoss(mode=smp.losses.MULTILABEL_MODE)],
             ]
             )
     
@@ -271,7 +271,7 @@ def create_data_transforms(input_size=512):
     # Target transform for masks
     target_transform = v2.Compose([
         # v2.Resize((input_size, input_size), interpolation=v2.InterpolationMode.NEAREST),
-        v2.Lambda(lambda x: torch.from_numpy(np.array(x))),
+        v2.Lambda(lambda x: torch.from_numpy(np.array(x)).float() / 255.0),
         v2.Lambda(lambda x: (x > 0.5).float()),
         # v2.Lambda(lambda x: (x > 0.5).to(torch.int32)),
         # v2.Lambda(lambda x: x.unsqueeze(0))
@@ -279,12 +279,12 @@ def create_data_transforms(input_size=512):
     
     
     # i am gonna regret this in like an hr
-    target_transform = v2.Compose([
-        # v2.Resize((input_size, input_size), interpolation=v2.InterpolationMode.NEAREST),
-        v2.Lambda(lambda x: torch.from_numpy(np.array(x)).float() / 255.0),
-        v2.Lambda(lambda x: (x > 0.5).float()),
-        v2.Lambda(lambda x: x.unsqueeze(0))
-    ])
+    # target_transform = v2.Compose([
+    #     # v2.Resize((input_size, input_size), interpolation=v2.InterpolationMode.NEAREST),
+    #     v2.Lambda(lambda x: torch.from_numpy(np.array(x)).float() / 255.0),
+    #     v2.Lambda(lambda x: (x > 0.5).float()),
+    #     v2.Lambda(lambda x: x.unsqueeze(0))
+    # ])
     
     return train_transform, val_transform, target_transform
 
@@ -359,11 +359,11 @@ def main():
     train_transform, val_transform, target_transform = create_data_transforms(cfg["input_size"])
 
     ##### ye i need to code better
-    # datamodule = HandSegDataModule(cfg["yaml_file"], cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
+    datamodule = HandSegDataModule(cfg["yaml_file"], cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
     
     ##### old datamodule ?
     
-    datamodule = HandSegDataModule(os.path.join(cfg["data_root"]), cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
+    # datamodule = HandSegDataModule(os.path.join(cfg["data_root"]), cfg["batch_size"], cfg["batch_size"], train_transform, val_transform, target_transform)
     
     
     

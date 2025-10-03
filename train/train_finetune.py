@@ -65,10 +65,11 @@ class FineTuneLightningModule(pl.LightningModule):
         
         # smp.losses.
         self.criterion = CombineLoss([
-            [1, FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')],
+            # [1, FocalLossBCE(alpha=1.0, gamma=2.0, reduction='mean')],
             # [1, smp.losses.(alpha=1.0, gamma=2.0, reduction='mean')],
-            # [1, smp.losses.DiceLoss(mode=smp.losses.MULTILABEL_MODE)],
-            # [1, smp.losses.JaccardLoss(mode=smp.losses.MULTILABEL_MODE)],
+            [2.718, smp.losses.FocalLoss(mode=smp.losses.MULTILABEL_MODE, gamma=2.0, reduction='mean')],
+            [1, smp.losses.DiceLoss(mode=smp.losses.MULTILABEL_MODE)],
+            [1, smp.losses.JaccardLoss(mode=smp.losses.MULTILABEL_MODE)],
             ]
             )
     
@@ -244,7 +245,7 @@ def create_data_transforms(input_size=512):
     # Target transform for masks
     target_transform = v2.Compose([
         # v2.Resize((input_size, input_size), interpolation=v2.InterpolationMode.NEAREST),
-        v2.Lambda(lambda x: torch.from_numpy(np.array(x))),
+        v2.Lambda(lambda x: torch.from_numpy(np.array(x)).float() / 255.0),
         v2.Lambda(lambda x: (x > 0.5).float()),
         # v2.Lambda(lambda x: (x > 0.5).to(torch.int32)),
         # v2.Lambda(lambda x: x.unsqueeze(0))

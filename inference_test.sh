@@ -1,0 +1,1 @@
+python test.py --checkpoint /home/treerspeaking/src/python/hand_seg/zero_shot/runs/detect/sure-1-hand-detection5/weights/best.pt --folder /home/treerspeaking/src/python/hand_seg/inference/renamed_data --output /home/treerspeaking/src/python/hand_seg/zero_shot/inference

@@ -1,1 +1,2 @@
-python -m train.train --config /home/treerspeaking/src/python/hand_seg/config/old_config.yaml
+# python -m train.train --config /home/treerspeaking/src/python/hand_seg/config/old_config.yaml
+python -m train.train --config /home/treerspeaking/src/python/hand_seg/config/unetplusplus.yaml
